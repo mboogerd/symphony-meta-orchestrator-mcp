@@ -4,6 +4,11 @@ import { createRuntimeConfig } from '../config/runtime.ts';
 import { createLogger } from '../logging/logger.ts';
 import { packageInfo } from '../package-info.ts';
 import { createProjectRegistryService, ProjectRegistryValidationError } from '../services/registry/index.ts';
+import {
+  validateProjectWorkflowSetups,
+  WorkflowSetupValidationError,
+  writeProjectWorkflow
+} from '../services/workflow/index.ts';
 
 export async function runCli(
   argv: string[] = process.argv.slice(2),
@@ -61,8 +66,30 @@ export async function runCli(
 
   if (command === 'projects:validate') {
     try {
-      await createProjectRegistryService(runtime.configPath).load();
-      stdout.write(`${JSON.stringify({ status: 'ok', configPath: runtime.configPath }, null, 2)}\n`);
+      const registry = await createProjectRegistryService(runtime.configPath).load();
+      const setup = await validateProjectWorkflowSetups(registry.projects);
+      const ok = setup.every((validation) => validation.ok);
+      stdout.write(`${JSON.stringify({ status: ok ? 'ok' : 'invalid', configPath: runtime.configPath, setup }, null, 2)}\n`);
+      return ok ? 0 : 1;
+    } catch (error) {
+      stderr.write(`${formatError(error)}\n`);
+      return 1;
+    }
+  }
+
+  if (command === 'workflows:render') {
+    try {
+      const projectId = readOption(argv, ['--project', '--project-id']);
+      const projects = await createProjectRegistryService(runtime.configPath).list();
+      const project = projectId === undefined ? projects[0] : projects.find((candidate) => candidate.id === projectId);
+
+      if (project === undefined) {
+        stderr.write(`Project not found${projectId === undefined ? '' : `: ${projectId}`}\n`);
+        return 1;
+      }
+
+      const workflow = await writeProjectWorkflow(project);
+      stdout.write(`${JSON.stringify({ status: 'ok', workflow }, null, 2)}\n`);
       return 0;
     } catch (error) {
       stderr.write(`${formatError(error)}\n`);
@@ -100,7 +127,8 @@ function helpText(): string {
     'Commands:',
     '  health     Print runtime health information',
     '  projects:list      List managed projects from the registry',
-    '  projects:validate  Validate the managed-project registry',
+    '  projects:validate  Validate the managed-project registry and workflow setup',
+    '  workflows:render   Render WORKFLOW.md for a managed project',
     '  version    Print package name and version',
     '',
     'Options:',
@@ -116,7 +144,29 @@ function formatError(error: unknown): string {
     return error.message;
   }
 
+  if (error instanceof WorkflowSetupValidationError) {
+    return JSON.stringify({ status: 'invalid', setup: error.validations }, null, 2);
+  }
+
   return error instanceof Error ? error.message : String(error);
+}
+
+function readOption(argv: string[], names: string[]): string | undefined {
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index];
+
+    for (const name of names) {
+      if (value === name) {
+        return argv[index + 1];
+      }
+
+      if (value.startsWith(`${name}=`)) {
+        return value.slice(name.length + 1);
+      }
+    }
+  }
+
+  return undefined;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

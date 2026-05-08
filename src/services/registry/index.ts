@@ -29,6 +29,7 @@ export type RepositoryConfig = {
 
 export type SymphonyProjectConfig = {
   workspacePath: string;
+  logsPath?: string;
   mcpPort: number;
   runnerPort?: number;
 };
@@ -253,6 +254,7 @@ function validateSymphony(
   }
 
   const workspacePath = readRequiredString(value.workspacePath, `${prefix}.symphony.workspacePath`, issues);
+  readOptionalString(value.logsPath, `${prefix}.symphony.logsPath`, issues);
   const mcpPort = readRequiredPort(value.mcpPort, `${prefix}.symphony.mcpPort`, issues);
   const runnerPort = readOptionalPort(value.runnerPort, `${prefix}.symphony.runnerPort`, issues);
 
