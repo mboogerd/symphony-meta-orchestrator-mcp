@@ -243,6 +243,14 @@ test('CLI runner start status stop covers local runner smoke path', () => {
     writeFileSync(join(repoPath, 'WORKFLOW.md'), ['---', 'tracker:', '  kind: linear', '---', '', 'Prompt body.'].join('\n'));
     writeFileSync(runnerPath, [
       '#!/usr/bin/env node',
+      "const http = require('node:http');",
+      'const args = process.argv.slice(2);',
+      "const port = Number(args[args.indexOf('--port') + 1]);",
+      'const workflowPath = args.at(-1);',
+      "http.createServer((req, res) => {",
+      "  res.setHeader('content-type', 'application/json');",
+      "  res.end(JSON.stringify({ projectId: 'meta-orchestrator', workflowPath, state: 'ready' }));",
+      "}).listen(port, '127.0.0.1');",
       'setInterval(() => {}, 1000);'
     ].join('\n'));
     chmodSync(runnerPath, 0o755);

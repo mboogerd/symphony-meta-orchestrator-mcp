@@ -5,13 +5,15 @@ import { dirname, join, resolve } from 'node:path';
 import type { ManagedProject } from '../registry/index.ts';
 import { validateProjectWorkflowSetup, writeProjectWorkflow, type WorkflowRenderResult } from '../workflow/index.ts';
 
-export type RunnerProcessState = 'idle' | 'starting' | 'running' | 'stopped' | 'exited' | 'missing' | 'invalid';
+export type RunnerProcessState = 'idle' | 'starting' | 'running' | 'unhealthy' | 'stopped' | 'exited' | 'missing' | 'invalid';
 
 export type RunnerStatusDetails = {
   message: string;
   checkedAt: string;
   exitCode?: number | null;
   signal?: NodeJS.Signals | string | null;
+  readiness?: RunnerReadinessState;
+  logExcerpt?: string[];
 };
 
 export type RunnerStatus = {
@@ -41,7 +43,21 @@ export type RunnerManagerOptions = {
   cwd?: string;
   now?: () => Date;
   spawnProcess?: typeof spawn;
+  readinessTimeoutMs?: number;
+  readinessPollIntervalMs?: number;
+  readinessCheck?: RunnerReadinessCheck;
+  isProcessAlive?: (pid: number) => boolean;
 };
+
+export type RunnerReadinessState = 'ready' | 'not_ready' | 'wrong_project' | 'wrong_workflow' | 'error' | 'timeout' | 'exited';
+
+export type RunnerReadinessResult = {
+  ready: boolean;
+  state: RunnerReadinessState;
+  message: string;
+};
+
+export type RunnerReadinessCheck = (project: ManagedProject, status: RunnerStatus) => Promise<RunnerReadinessResult>;
 
 type RunnerStateFile = {
   projectId: string;
@@ -75,11 +91,18 @@ export type RunnerLogTail = {
 };
 
 const STOP_TIMEOUT_MS = 5_000;
+const DEFAULT_READINESS_TIMEOUT_MS = Number.parseInt(process.env.SYMPHONY_RUNNER_READINESS_TIMEOUT_MS ?? '', 10) || 30_000;
+const DEFAULT_READINESS_POLL_INTERVAL_MS = Number.parseInt(process.env.SYMPHONY_RUNNER_READINESS_POLL_INTERVAL_MS ?? '', 10) || 500;
+const LOG_EXCERPT_LINES = 20;
 
 export function createRunnerManager(options: RunnerManagerOptions = {}): RunnerManager {
   const now = options.now ?? (() => new Date());
   const spawnProcess = options.spawnProcess ?? spawn;
   const commandOverride = options.command ?? process.env.SYMPHONY_RUNNER_COMMAND;
+  const readinessTimeoutMs = Math.max(1, options.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS);
+  const readinessPollIntervalMs = Math.max(1, options.readinessPollIntervalMs ?? DEFAULT_READINESS_POLL_INTERVAL_MS);
+  const readinessCheck = options.readinessCheck ?? checkRunnerReadiness;
+  const processAlive = options.isProcessAlive ?? isProcessAlive;
 
   return {
     async start(project: ManagedProject): Promise<RunnerStartResult> {
@@ -87,12 +110,18 @@ export function createRunnerManager(options: RunnerManagerOptions = {}): RunnerM
       await mkdir(paths.logsRoot, { recursive: true });
 
       const existing = await readState(paths.statePath);
-      if (existing !== undefined && isProcessAlive(existing.pid)) {
+      if (existing !== undefined && processAlive(existing.pid)) {
+        const checkedAt = now().toISOString();
+        const readiness = await readinessCheck(project, statusFromState(project, paths, existing, 'running', {
+          message: 'Runner process is running',
+          checkedAt
+        }));
         return {
           started: false,
-          status: statusFromState(project, paths, existing, 'running', {
-            message: 'Runner is already running for this managed project',
-            checkedAt: now().toISOString()
+          status: statusFromState(project, paths, existing, readiness.ready ? 'running' : 'unhealthy', {
+            message: readiness.ready ? 'Runner is already running for this managed project' : `Existing runner is not ready: ${readiness.message}`,
+            checkedAt,
+            readiness: readiness.state
           })
         };
       }
@@ -120,9 +149,10 @@ export function createRunnerManager(options: RunnerManagerOptions = {}): RunnerM
       const workflow = await writeProjectWorkflow(project);
       const runnerCommand = resolveRunnerCommand(commandOverride, options.commandArgs, options.cwd, project, workflow);
       const child = spawnRunner(spawnProcess, runnerCommand, project, workflow, paths.logPath);
+      const pid = requirePid(child);
       const state: RunnerStateFile = {
         projectId: project.id,
-        pid: requirePid(child),
+        pid,
         port: project.symphony.runnerPort,
         command: runnerCommand.file,
         args: runnerCommand.args,
@@ -133,15 +163,29 @@ export function createRunnerManager(options: RunnerManagerOptions = {}): RunnerM
         startedAt: now().toISOString(),
         latestHeartbeat: now().toISOString(),
         status: {
-          message: 'Runner process started',
+          message: 'Runner process started; waiting for readiness',
           checkedAt: now().toISOString()
         }
       };
       await writeState(paths.statePath, state);
+      const starting = statusFromState(project, paths, state, 'starting', state.status);
+      const readiness = await waitForReadiness(project, starting, {
+        timeoutMs: readinessTimeoutMs,
+        pollIntervalMs: readinessPollIntervalMs,
+        readinessCheck,
+        now,
+        isAlive: () => processAlive(pid)
+      });
+      const readyState: RunnerStateFile = {
+        ...state,
+        latestHeartbeat: readiness.details.checkedAt,
+        status: readiness.details
+      };
+      await writeState(paths.statePath, readyState);
 
       return {
         started: true,
-        status: statusFromState(project, paths, state, 'running', state.status)
+        status: statusFromState(project, paths, readyState, readiness.ready ? 'running' : 'unhealthy', readiness.details)
       };
     },
 
@@ -154,7 +198,7 @@ export function createRunnerManager(options: RunnerManagerOptions = {}): RunnerM
         return createIdleRunnerStatus(project, paths, 'No runner state file exists', checkedAt);
       }
 
-      if (!isProcessAlive(state.pid)) {
+      if (!processAlive(state.pid)) {
         const stopped = statusFromState(project, paths, state, 'stopped', {
           message: 'Runner process was not running',
           checkedAt
@@ -186,12 +230,22 @@ export function createRunnerManager(options: RunnerManagerOptions = {}): RunnerM
         return createIdleRunnerStatus(project, paths, 'No runner state file exists', checkedAt);
       }
 
-      const running = isProcessAlive(state.pid);
-      const details: RunnerStatusDetails = {
+      const running = processAlive(state.pid);
+      let nextState: RunnerProcessState = running ? 'running' : 'missing';
+      let details: RunnerStatusDetails = {
         message: running ? 'Runner process is running' : 'Runner process is not running',
         checkedAt
       };
-      const nextStatus = statusFromState(project, paths, state, running ? 'running' : 'missing', details);
+      if (running) {
+        const readiness = await readinessCheck(project, statusFromState(project, paths, state, 'running', details));
+        details = {
+          message: readiness.message,
+          checkedAt,
+          readiness: readiness.state
+        };
+        nextState = readiness.ready ? 'running' : 'unhealthy';
+      }
+      const nextStatus = statusFromState(project, paths, state, nextState, details);
       await writeState(paths.statePath, { ...state, latestHeartbeat: checkedAt, status: details });
       return nextStatus;
     },
@@ -219,6 +273,112 @@ export function createRunnerManager(options: RunnerManagerOptions = {}): RunnerM
       };
     }
   };
+}
+
+async function waitForReadiness(
+  project: ManagedProject,
+  status: RunnerStatus,
+  options: {
+    timeoutMs: number;
+    pollIntervalMs: number;
+    readinessCheck: RunnerReadinessCheck;
+    now: () => Date;
+    isAlive: () => boolean;
+  }
+): Promise<{ ready: boolean; details: RunnerStatusDetails }> {
+  const deadline = Date.now() + options.timeoutMs;
+  let lastResult: RunnerReadinessResult | undefined;
+
+  while (Date.now() <= deadline) {
+    if (!options.isAlive()) {
+      return {
+        ready: false,
+        details: {
+          message: `Runner process exited before readiness. Check logs at ${status.logPath}.`,
+          checkedAt: options.now().toISOString(),
+          readiness: 'exited',
+          logExcerpt: await tailLogExcerpt(status.logPath)
+        }
+      };
+    }
+
+    lastResult = await options.readinessCheck(project, status);
+    if (lastResult.ready) {
+      return {
+        ready: true,
+        details: {
+          message: lastResult.message,
+          checkedAt: options.now().toISOString(),
+          readiness: lastResult.state
+        }
+      };
+    }
+    if (lastResult.state === 'wrong_project' || lastResult.state === 'wrong_workflow') {
+      return {
+        ready: false,
+        details: {
+          message: `${lastResult.message}. Check logs at ${status.logPath}.`,
+          checkedAt: options.now().toISOString(),
+          readiness: lastResult.state,
+          logExcerpt: await tailLogExcerpt(status.logPath)
+        }
+      };
+    }
+
+    await sleep(options.pollIntervalMs);
+  }
+
+  return {
+    ready: false,
+    details: {
+      message: `Runner readiness timed out after ${options.timeoutMs}ms: ${lastResult?.message ?? 'service did not report ready'}. Check logs at ${status.logPath}.`,
+      checkedAt: options.now().toISOString(),
+      readiness: 'timeout',
+      logExcerpt: await tailLogExcerpt(status.logPath)
+    }
+  };
+}
+
+async function checkRunnerReadiness(project: ManagedProject, status: RunnerStatus): Promise<RunnerReadinessResult> {
+  if (status.dashboardUrl === undefined) {
+    return { ready: false, state: 'not_ready', message: 'Runner dashboard URL is not configured' };
+  }
+
+  try {
+    const response = await fetch(status.dashboardUrl, { signal: AbortSignal.timeout(1_000) });
+    if (!response.ok) {
+      return { ready: false, state: 'not_ready', message: `Runner service returned HTTP ${response.status}` };
+    }
+
+    const contentType = response.headers.get('content-type') ?? '';
+    if (!contentType.includes('application/json')) {
+      return { ready: true, state: 'ready', message: 'Runner service responded successfully; project/workflow identity was not exposed by the dashboard response' };
+    }
+
+    const body = await response.json() as unknown;
+    const projectId = readStringPath(body, ['projectId']) ?? readStringPath(body, ['project', 'id']) ?? readStringPath(body, ['id']);
+    if (projectId !== undefined && projectId !== project.id) {
+      return { ready: false, state: 'wrong_project', message: `Runner is serving project "${projectId}", expected "${project.id}"` };
+    }
+
+    const workflowPath = readStringPath(body, ['workflowPath']) ?? readStringPath(body, ['workflow', 'path']);
+    if (workflowPath !== undefined && resolve(workflowPath) !== resolve(status.workflowPath)) {
+      return { ready: false, state: 'wrong_workflow', message: `Runner is serving workflow "${workflowPath}", expected "${status.workflowPath}"` };
+    }
+
+    const readiness = readStringPath(body, ['state']) ?? readStringPath(body, ['status']);
+    if (readiness !== undefined && !['ready', 'running', 'ok'].includes(readiness.toLowerCase())) {
+      return { ready: false, state: 'not_ready', message: `Runner service responded but is "${readiness}"` };
+    }
+
+    return { ready: true, state: 'ready', message: 'Runner service responded with expected project/workflow readiness' };
+  } catch (error) {
+    return {
+      ready: false,
+      state: 'error',
+      message: `Runner service is not ready: ${error instanceof Error ? error.message : String(error)}`
+    };
+  }
 }
 
 export function createIdleRunnerStatus(
@@ -422,6 +582,33 @@ async function readState(statePath: string): Promise<RunnerStateFile | undefined
 async function writeState(statePath: string, state: RunnerStateFile): Promise<void> {
   await mkdir(dirname(statePath), { recursive: true });
   await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+}
+
+async function tailLogExcerpt(logPath: string): Promise<string[]> {
+  try {
+    const contents = await readFile(logPath, 'utf8');
+    return contents.replace(/\r?\n$/, '').split(/\r?\n/).slice(-LOG_EXCERPT_LINES).filter((line) => line.length > 0);
+  } catch (error) {
+    if (isNodeError(error) && error.code === 'ENOENT') {
+      return [];
+    }
+    throw error;
+  }
+}
+
+function readStringPath(value: unknown, path: string[]): string | undefined {
+  let cursor = value;
+  for (const key of path) {
+    if (cursor === null || typeof cursor !== 'object' || !(key in cursor)) {
+      return undefined;
+    }
+    cursor = (cursor as Record<string, unknown>)[key];
+  }
+  return typeof cursor === 'string' ? cursor : undefined;
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 }
 
 function isRunnerStateFile(value: unknown): value is RunnerStateFile {
