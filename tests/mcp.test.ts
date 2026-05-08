@@ -157,7 +157,12 @@ test('MCP smoke registers project, renders workflow, and validates setup', async
   const repoPath = join(cwd, 'repo');
   const workspacePath = join(cwd, 'workspace');
   const logsPath = join(cwd, 'logs');
-  const project = managedProject({ repoPath, workspaceRoot: workspacePath, logsRoot: logsPath });
+  const project = managedProject({
+    repoPath,
+    workspaceRoot: workspacePath,
+    logsRoot: logsPath,
+    runnerPort: 43_120 + Math.trunc(Math.random() * 1000)
+  });
 
   try {
     mkdirSync(repoPath, { recursive: true });

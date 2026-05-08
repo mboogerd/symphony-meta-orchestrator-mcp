@@ -5,6 +5,9 @@ import { createProjectRegistryService, ProjectRegistryValidationError, type Mana
 import { createRunnerManager, type RunnerManager } from '../services/runner/index.ts';
 import { validateProjectWorkflowSetups, WorkflowSetupValidationError, writeProjectWorkflow, type PortAvailabilityProbe } from '../services/workflow/index.ts';
 
+// Compatibility JSON-RPC harness retained for direct unit tests and parity checks.
+// The production stdio entrypoint uses the official MCP SDK server in server.ts.
+
 export type JsonRpcRequest = {
   jsonrpc: '2.0';
   id?: string | number | null;
