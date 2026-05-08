@@ -34,13 +34,44 @@ export type RepositoryConfig = {
 };
 
 export type WorkflowConfig =
-  | {
+  | ({
       source: 'repo';
       path: string;
-    }
-  | {
+    } & WorkflowRuntimeConfig)
+  | ({
       source: 'generated';
       template: string;
+    } & WorkflowRuntimeConfig);
+
+export type WorkflowRuntimeConfig = {
+  runtime?: {
+    tracker?: {
+      activeStates?: string[];
+      terminalStates?: string[];
+    };
+    agent?: {
+      maxConcurrentAgents?: number;
+      maxTurns?: number;
+    };
+    codex?: {
+      command?: string;
+      approvalPolicy?: string;
+    };
+    hooks?: {
+      afterCreate?: WorkflowAfterCreateHookConfig;
+      beforeRemove?: string;
+    };
+  };
+};
+
+export type WorkflowAfterCreateHookConfig =
+  | {
+      type: 'gitClone';
+      cloneSource?: string;
+      target?: string;
+    }
+  | {
+      type: 'none';
     };
 
 export type CodexThreadSandboxPolicy = 'read-only' | 'workspace-write' | 'danger-full-access';
@@ -98,6 +129,8 @@ const nonEmptyString = z.string().trim().min(1, 'expected a non-empty string');
 const port = z.number().int().min(1).max(65535);
 const legacySandboxPolicy = z.enum(['read-only', 'workspace-write', 'danger-full-access']);
 const threadSandboxPolicy = legacySandboxPolicy;
+const positiveInteger = z.number().int().min(1);
+const stringList = z.array(nonEmptyString).min(1);
 const turnSandboxPolicy = z.preprocess(normalizeCodexTurnSandboxPolicy, z.discriminatedUnion('type', [
   z.object({
     type: z.literal('readOnly'),
@@ -119,6 +152,36 @@ const turnSandboxPolicy = z.preprocess(normalizeCodexTurnSandboxPolicy, z.discri
   }).strict()
 ]));
 
+const workflowRuntimeSchema = z.object({
+  runtime: z.object({
+    tracker: z.object({
+      activeStates: stringList.optional(),
+      terminalStates: stringList.optional()
+    }).strict().optional(),
+    agent: z.object({
+      maxConcurrentAgents: positiveInteger.optional(),
+      maxTurns: positiveInteger.optional()
+    }).strict().optional(),
+    codex: z.object({
+      command: nonEmptyString.optional(),
+      approvalPolicy: nonEmptyString.optional()
+    }).strict().optional(),
+    hooks: z.object({
+      afterCreate: z.discriminatedUnion('type', [
+        z.object({
+          type: z.literal('gitClone'),
+          cloneSource: nonEmptyString.optional(),
+          target: nonEmptyString.optional()
+        }).strict(),
+        z.object({
+          type: z.literal('none')
+        }).strict()
+      ]).optional(),
+      beforeRemove: nonEmptyString.optional()
+    }).strict().optional()
+  }).strict().optional()
+});
+
 export const managedProjectSchema = z.object({
   id: nonEmptyString,
   name: nonEmptyString,
@@ -139,11 +202,11 @@ export const managedProjectSchema = z.object({
     z.object({
       source: z.literal('repo'),
       path: nonEmptyString
-    }).strict(),
+    }).merge(workflowRuntimeSchema).strict(),
     z.object({
       source: z.literal('generated'),
       template: nonEmptyString
-    }).strict()
+    }).merge(workflowRuntimeSchema).strict()
   ]),
   symphony: z.object({
     command: nonEmptyString,

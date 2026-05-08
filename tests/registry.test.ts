@@ -147,6 +147,76 @@ test('registry normalizes legacy string turn sandbox policies', async () => {
   }
 });
 
+test('registry persists configurable workflow runtime settings', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'mrb25-registry-runtime-'));
+  const configPath = join(cwd, 'symphony.registry.yaml');
+  const registry = createProjectRegistryService(configPath);
+  const project: ManagedProject = {
+    ...baseProject,
+    workflow: {
+      ...baseProject.workflow,
+      runtime: {
+        tracker: {
+          activeStates: ['Queued', 'Running'],
+          terminalStates: ['Finished']
+        },
+        agent: {
+          maxConcurrentAgents: 2,
+          maxTurns: 5
+        },
+        codex: {
+          command: 'codex --profile custom app-server',
+          approvalPolicy: 'on-request'
+        },
+        hooks: {
+          afterCreate: {
+            type: 'gitClone',
+            cloneSource: 'https://example.test/repo with spaces.git',
+            target: 'repo dir'
+          },
+          beforeRemove: 'true'
+        }
+      }
+    }
+  };
+
+  try {
+    await registry.create(project);
+
+    assert.deepEqual((await registry.load()).projects[0]?.workflow, project.workflow);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('registry rejects invalid workflow runtime settings', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'mrb25-registry-runtime-invalid-'));
+  const registry = createProjectRegistryService(join(cwd, 'registry.yaml'));
+
+  try {
+    await assert.rejects(
+      registry.create({
+        ...baseProject,
+        workflow: {
+          ...baseProject.workflow,
+          runtime: {
+            tracker: { activeStates: [] },
+            agent: { maxTurns: 0 }
+          }
+        }
+      }),
+      (error) => {
+        assert.equal(error instanceof ProjectRegistryValidationError, true);
+        assert.match((error as Error).message, /projects\[0\]\.workflow\.runtime\.tracker\.activeStates/);
+        assert.match((error as Error).message, /projects\[0\]\.workflow\.runtime\.agent\.maxTurns/);
+        return true;
+      }
+    );
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test('registry rejects duplicate identities, ports, and paths deterministically', async () => {
   const cwd = await mkdtemp(join(tmpdir(), 'mrb8-registry-'));
   const registry = createProjectRegistryService(join(cwd, 'registry.yaml'));
