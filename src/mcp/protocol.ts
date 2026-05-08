@@ -1,8 +1,8 @@
 import type { RuntimeConfig } from '../config/runtime.ts';
 import { packageInfo } from '../package-info.ts';
-import { createLinearService, LinearServiceError } from '../services/linear/index.ts';
+import { createLinearService, LinearServiceError, type LinearService } from '../services/linear/index.ts';
 import { createProjectRegistryService, ProjectRegistryValidationError, type ManagedProject } from '../services/registry/index.ts';
-import { createRunnerManager } from '../services/runner/index.ts';
+import { createRunnerManager, type RunnerManager } from '../services/runner/index.ts';
 import { validateProjectWorkflowSetups, WorkflowSetupValidationError, writeProjectWorkflow } from '../services/workflow/index.ts';
 
 export type JsonRpcRequest = {
@@ -22,7 +22,16 @@ export type JsonRpcResponse = {
   };
 };
 
-export async function handleMcpMessage(message: unknown, runtime: RuntimeConfig): Promise<JsonRpcResponse | undefined> {
+export type McpRuntimeServices = {
+  createLinearService?: (runtime: RuntimeConfig) => LinearService;
+  createRunnerManager?: (runtime: RuntimeConfig) => RunnerManager;
+};
+
+export type McpRuntimeConfig = RuntimeConfig & {
+  mcpServices?: McpRuntimeServices;
+};
+
+export async function handleMcpMessage(message: unknown, runtime: McpRuntimeConfig): Promise<JsonRpcResponse | undefined> {
   if (!isJsonRpcRequest(message)) {
     return jsonRpcError(null, -32600, 'Invalid Request');
   }
@@ -156,7 +165,7 @@ export async function handleMcpMessage(message: unknown, runtime: RuntimeConfig)
   }
 }
 
-async function handleToolCall(message: JsonRpcRequest, runtime: RuntimeConfig): Promise<JsonRpcResponse> {
+async function handleToolCall(message: JsonRpcRequest, runtime: McpRuntimeConfig): Promise<JsonRpcResponse> {
   const name = typeof message.params?.name === 'string' ? message.params.name : undefined;
   const argumentsValue = isRecord(message.params?.arguments) ? message.params.arguments : {};
 
@@ -258,7 +267,7 @@ async function handleToolCall(message: JsonRpcRequest, runtime: RuntimeConfig): 
 
     if (name === 'start_runner' || name === 'stop_runner' || name === 'restart_runner' || name === 'get_runner_status' || name === 'tail_runner_logs') {
       const project = await requireProject(runtime, argumentsValue.projectId);
-      const manager = createRunnerManager();
+      const manager = runnerManager(runtime);
       const runner = name === 'start_runner'
         ? await manager.start(project)
         : name === 'stop_runner'
@@ -295,8 +304,12 @@ async function requireProject(runtime: RuntimeConfig, projectId: unknown): Promi
   return projects[0];
 }
 
-function linear(runtime: RuntimeConfig) {
-  return createLinearService({ apiKey: runtime.env.LINEAR_API_KEY });
+function linear(runtime: McpRuntimeConfig) {
+  return runtime.mcpServices?.createLinearService?.(runtime) ?? createLinearService({ apiKey: runtime.env.LINEAR_API_KEY });
+}
+
+function runnerManager(runtime: McpRuntimeConfig) {
+  return runtime.mcpServices?.createRunnerManager?.(runtime) ?? createRunnerManager();
 }
 
 function toolResult(id: string | number | null, payload: Record<string, unknown>, isError = false): JsonRpcResponse {
