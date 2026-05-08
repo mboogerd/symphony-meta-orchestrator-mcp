@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import YAML from 'yaml';
+import { z } from 'zod';
 
 export type ManagedProjectRegistry = {
   version: 1;
@@ -54,6 +55,37 @@ export class ProjectRegistryValidationError extends Error {
     this.issues = issues;
   }
 }
+
+const nonEmptyString = z.string().trim().min(1, 'expected a non-empty string');
+const port = z.number().int().min(1).max(65535);
+
+export const managedProjectSchema = z.object({
+  id: nonEmptyString,
+  name: nonEmptyString,
+  linear: z.object({
+    teamKey: nonEmptyString,
+    projectId: nonEmptyString.optional(),
+    projectKey: nonEmptyString.optional()
+  }).strict().refine((value) => value.projectId !== undefined || value.projectKey !== undefined, {
+    message: 'expected projectId or projectKey'
+  }),
+  repo: z.object({
+    path: nonEmptyString,
+    remote: nonEmptyString.optional(),
+    branch: nonEmptyString.optional()
+  }).strict(),
+  symphony: z.object({
+    workspacePath: nonEmptyString,
+    logsPath: nonEmptyString.optional(),
+    mcpPort: port,
+    runnerPort: port.optional()
+  }).strict()
+}).strict();
+
+export const managedProjectRegistrySchema = z.object({
+  version: z.literal(1),
+  projects: z.array(managedProjectSchema)
+}).strict();
 
 export function createEmptyRegistry(): ManagedProjectRegistry {
   return { version: 1, projects: [] };
@@ -129,25 +161,38 @@ export async function saveRegistry(configPath: string, registry: ManagedProjectR
 }
 
 export function validateProjectRegistry(registry: ManagedProjectRegistry): void {
-  const issues: string[] = [];
+  const parsed = managedProjectRegistrySchema.safeParse(registry);
+  const issues = parsed.success ? [] : parsed.error.issues.map((issue) => {
+    const path = formatZodPath(issue.path);
+    return `${path}: ${registryIssueMessage(issue.message)}`;
+  });
 
-  if (!isRecord(registry)) {
-    throw new ProjectRegistryValidationError(['registry: expected an object']);
-  }
-
-  if (registry.version !== 1) {
-    issues.push('version: expected 1');
-  }
-
-  if (!Array.isArray(registry.projects)) {
-    issues.push('projects: expected an array');
-  } else {
-    validateProjects(registry.projects, issues);
+  if (parsed.success) {
+    validateProjects(parsed.data.projects, issues);
   }
 
   if (issues.length > 0) {
     throw new ProjectRegistryValidationError(issues);
   }
+}
+
+function formatZodPath(path: PropertyKey[]): string {
+  if (path.length === 0) {
+    return 'registry';
+  }
+
+  return path.reduce((formatted, part) => {
+    if (typeof part === 'number') {
+      return `${formatted}[${part}]`;
+    }
+    return formatted.length === 0 ? String(part) : `${formatted}.${String(part)}`;
+  }, '');
+}
+
+function registryIssueMessage(message: string): string {
+  return message.startsWith('Too big: expected number to be <=65535')
+    ? 'expected an integer from 1 to 65535'
+    : message;
 }
 
 function normalizeRegistry(value: unknown): ManagedProjectRegistry {

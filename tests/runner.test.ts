@@ -101,6 +101,40 @@ test('runner manager tails bounded log lines', async () => {
   }
 });
 
+test('runner command parsing preserves quoted arguments and rejects shell operators', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb18-runner-command-'));
+  const repoPath = join(cwd, 'repo');
+  const workspacePath = join(cwd, 'workspace');
+  const logsPath = join(cwd, 'logs');
+  const calls: Array<{ command: string; args: string[] }> = [];
+
+  try {
+    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    const project = managedProject({ repoPath, workspacePath, logsPath });
+    const manager = createRunnerManager({
+      command: `${process.execPath} -e "setInterval(() => {}, 1000)"`,
+      spawnProcess: ((command, args) => {
+        calls.push({ command, args: args ?? [] });
+        return {
+          pid: 12345,
+          unref() {}
+        };
+      }) as never
+    });
+
+    await manager.start(project);
+    assert.equal(calls[0]?.command, process.execPath);
+    assert.deepEqual(calls[0]?.args.slice(0, 2), ['-e', 'setInterval(() => {}, 1000)']);
+
+    assert.throws(
+      () => createRunnerManager({ command: `${process.execPath} -e "ok" && echo nope` }),
+      /shell operators and globs are not supported/
+    );
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test('CLI runners:status reports runner lifecycle fields from the registry', () => {
   const cwd = mkdtempSync(join(tmpdir(), 'mrb10-cli-runner-'));
   const configPath = join(cwd, 'registry.yaml');
