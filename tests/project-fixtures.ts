@@ -30,7 +30,7 @@ export function managedProject(paths: {
       path: 'WORKFLOW.md'
     },
     symphony: {
-      command: paths.command ?? 'symphony',
+      command: paths.command ?? process.execPath,
       args: paths.args,
       cwd: paths.cwd,
       runnerPort: paths.runnerPort ?? 4310,

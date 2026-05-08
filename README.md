@@ -45,6 +45,28 @@ workflow, and runner status commands can run without it. Override
 `SYMPHONY_RUNNER_COMMAND` during local tests when you want the runner manager to
 launch a known local command instead of the registry command.
 
+### Project validation output
+
+`project validate` and the MCP `validate_project` tool return the same
+structured readiness result. The top-level `status` is `ok` only when every
+selected project has no blocking `issues`; non-blocking findings are listed in
+`warnings`.
+
+Each project result includes a `subsystems` object with `registry`, `repo`,
+`workflow`, `linear`, `runner`, `filesystem`, and `codexPolicy` groups. A group
+has `ok`, `errors`, and `warnings`, so operators can see whether the failure is
+schema, clone, workflow rendering, Linear auth, runner launch readiness,
+directory access, or Codex sandbox policy related.
+
+Warnings call out degraded readiness that may still be acceptable locally, such
+as a missing local default branch or absent git origin remote. Errors block real
+runner readiness, such as a missing repo path, invalid repo-owned workflow,
+unavailable runner port, missing runner command, missing writable roots, or a
+read-only Codex turn sandbox for workflows that expect git/GitHub operations.
+Set `SYMPHONY_VALIDATE_LINEAR=1` for CLI validation, or pass
+`validateLinear: true` to MCP `validate_project`, to require `LINEAR_API_KEY`
+and validate Linear-specific registry fields.
+
 Managed projects are stored as YAML runtime files:
 
 ```yaml

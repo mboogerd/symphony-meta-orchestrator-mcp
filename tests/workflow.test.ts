@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -79,7 +80,7 @@ test('generated workflow renders valid Symphony front matter and prompt body', a
   }
 });
 
-test('repo-owned workflow reports missing template path as render failure', async () => {
+test('repo-owned workflow reports missing template path', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'mrb15-workflow-missing-'));
   const repoPath = join(cwd, 'repo');
   const workspaceRoot = join(cwd, 'workspace');
@@ -90,8 +91,113 @@ test('repo-owned workflow reports missing template path as render failure', asyn
     const validation = await validateProjectWorkflowSetup(managedProject({ repoPath, workspaceRoot, logsRoot }));
 
     assert.equal(validation.ok, false);
-    assert.equal(validation.issues[0]?.code, 'workflow_render_failed');
-    assert.match(validation.issues[0]?.message ?? '', /ENOENT/);
+    assert.equal(validation.subsystems.workflow.errors[0]?.code, 'workflow_path_missing');
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('operational validation groups valid setup warnings by subsystem', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb17-valid-'));
+  const repoPath = join(cwd, 'repo');
+  const workspaceRoot = join(cwd, 'workspace');
+  const logsRoot = join(cwd, 'logs');
+
+  try {
+    spawnSync('git', ['init', '-b', 'main', repoPath], { encoding: 'utf8' });
+    spawnSync('git', ['-C', repoPath, 'remote', 'add', 'origin', 'https://github.com/example/repo.git'], { encoding: 'utf8' });
+    writeFileSync(join(repoPath, 'WORKFLOW.md'), ['---', 'tracker:', '  kind: linear', '---', '', 'Prompt body.'].join('\n'));
+
+    const validation = await validateProjectWorkflowSetup(managedProject({ repoPath, workspaceRoot, logsRoot }));
+
+    assert.equal(validation.ok, true);
+    assert.equal(validation.subsystems.registry.ok, true);
+    assert.equal(validation.subsystems.repo.ok, true);
+    assert.equal(validation.subsystems.workflow.ok, true);
+    assert.equal(validation.subsystems.runner.ok, true);
+    assert.deepEqual(validation.issues, []);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('operational validation detects invalid workflow front matter', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb17-invalid-workflow-'));
+  const repoPath = join(cwd, 'repo');
+
+  try {
+    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    writeFileSync(join(repoPath, 'WORKFLOW.md'), ['---', '- nope', '---', '', 'Prompt body.'].join('\n'));
+
+    const validation = await validateProjectWorkflowSetup(managedProject({ repoPath, workspaceRoot: join(cwd, 'workspace'), logsRoot: join(cwd, 'logs') }));
+
+    assert.equal(validation.ok, false);
+    assert.equal(validation.subsystems.workflow.errors[0]?.code, 'workflow_render_failed');
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('operational validation requires Linear slug when Linear validation is requested', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb17-linear-'));
+  const repoPath = join(cwd, 'repo');
+
+  try {
+    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    writeFileSync(join(repoPath, 'WORKFLOW.md'), 'Prompt body.');
+    const project = managedProject({ repoPath, workspaceRoot: join(cwd, 'workspace'), logsRoot: join(cwd, 'logs') });
+    project.tracker.projectSlug = '';
+
+    const validation = await validateProjectWorkflowSetup(project, { validateLinear: true, env: { LINEAR_API_KEY: 'token' } });
+
+    assert.equal(validation.ok, false);
+    assert.equal(validation.subsystems.linear.errors[0]?.code, 'linear_project_slug_missing');
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('operational validation detects unavailable runner port', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb17-port-'));
+  const server = createServer();
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+    const project = managedProject({ repoPath: join(cwd, 'repo'), workspaceRoot: join(cwd, 'workspace'), logsRoot: join(cwd, 'logs'), runnerPort: port });
+    spawnSync('git', ['init', project.repo.path], { encoding: 'utf8' });
+    writeFileSync(join(project.repo.path, 'WORKFLOW.md'), 'Prompt body.');
+
+    const validation = await validateProjectWorkflowSetup(project);
+
+    assert.equal(validation.ok, false);
+    assert.equal(validation.subsystems.runner.errors[0]?.code, 'runner_port_unavailable');
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('operational validation detects missing runner command and read-only turn sandbox', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb17-command-policy-'));
+  const repoPath = join(cwd, 'repo');
+
+  try {
+    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    writeFileSync(join(repoPath, 'WORKFLOW.md'), 'Use git and GitHub.');
+    const project = managedProject({
+      repoPath,
+      workspaceRoot: join(cwd, 'workspace'),
+      logsRoot: join(cwd, 'logs'),
+      command: 'definitely-missing-symphony-runner'
+    });
+    project.codex.turnSandbox = 'read-only';
+
+    const validation = await validateProjectWorkflowSetup(project);
+
+    assert.equal(validation.ok, false);
+    assert.equal(validation.subsystems.runner.errors[0]?.code, 'runner_command_missing');
+    assert.equal(validation.subsystems.codexPolicy.errors[0]?.code, 'codex_turn_sandbox_missing');
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

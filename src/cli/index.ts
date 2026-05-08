@@ -69,12 +69,17 @@ export async function runCli(
   if (command === 'project:validate') {
     try {
       const projectId = options.project;
-      const projects = await selectedProjects(runtime.configPath, projectId);
+      const registry = await createProjectRegistryService(runtime.configPath).load();
+      const projects = projectId === undefined ? registry.projects : registry.projects.filter((candidate) => candidate.id === projectId);
       if (projects.length === 0) {
         stderr.write(`Project not found${projectId === undefined ? '' : `: ${projectId}`}\n`);
         return 1;
       }
-      const setup = await validateProjectWorkflowSetups(projects);
+      const setup = await validateProjectWorkflowSetups(projects, {
+        registry,
+        validateLinear: Boolean(env.SYMPHONY_VALIDATE_LINEAR),
+        env
+      });
       const ok = setup.every((validation) => validation.ok);
       stdout.write(`${JSON.stringify({ status: ok ? 'ok' : 'invalid', configPath: runtime.configPath, setup }, null, 2)}\n`);
       return ok ? 0 : 1;

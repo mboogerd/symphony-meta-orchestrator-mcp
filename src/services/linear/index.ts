@@ -103,6 +103,7 @@ export type LinearSdkClient = {
   createIssueBatch(input: Record<string, unknown>): Promise<LinearPayload<'issues', LinearIssueLike[]>>;
   createIssueRelation(input: Record<string, unknown>): Promise<LinearPayload<'relation', LinearRelationLike>>;
   updateIssue(id: string, input: Record<string, unknown>): Promise<LinearPayload<'issue', LinearIssueLike>>;
+  projects(variables?: Record<string, unknown>): Promise<LinearConnection<LinearProjectLike>>;
   teams(variables?: Record<string, unknown>): Promise<LinearConnection<LinearTeamLike>>;
   workflowStates(variables?: Record<string, unknown>): Promise<LinearConnection<LinearWorkflowStateLike>>;
 };
@@ -191,6 +192,19 @@ export class LinearService {
         labelIds: input.labelIds
       });
       return toIssueReference(requireEntity(payload.issue, 'issue', 'create_issue'));
+    });
+  }
+
+  async resolveProjectSlug(slugId: string): Promise<LinearProjectReference | undefined> {
+    return this.wrap('resolve_project', async () => {
+      const projects = await this.client.projects({ filter: { slugId: { eq: slugId } }, first: 1 });
+      const project = projects.nodes[0];
+      return project === undefined ? undefined : {
+        id: project.id,
+        name: project.name,
+        slugId: requireString(project.slugId, 'project.slugId', 'resolve_project'),
+        url: requireString(project.url, 'project.url', 'resolve_project')
+      };
     });
   }
 
