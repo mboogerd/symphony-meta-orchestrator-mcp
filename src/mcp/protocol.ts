@@ -1,6 +1,7 @@
 import type { RuntimeConfig } from '../config/runtime.ts';
 import { packageInfo } from '../package-info.ts';
 import { createProjectRegistryService } from '../services/registry/index.ts';
+import { validateProjectWorkflowSetups, writeProjectWorkflow } from '../services/workflow/index.ts';
 
 export type JsonRpcRequest = {
   jsonrpc: '2.0';
@@ -67,7 +68,33 @@ export async function handleMcpMessage(message: unknown, runtime: RuntimeConfig)
     }
 
     case 'tools/list':
-      return jsonRpcResult(message.id, { tools: [] });
+      return jsonRpcResult(message.id, {
+        tools: [
+          {
+            name: 'projects_validate_setup',
+            description: 'Validate registry projects and generated Symphony workflow setup.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                projectId: { type: 'string' }
+              }
+            }
+          },
+          {
+            name: 'workflows_render',
+            description: 'Render WORKFLOW.md for a managed project after setup validation.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                projectId: { type: 'string' }
+              }
+            }
+          }
+        ]
+      });
+
+    case 'tools/call':
+      return handleToolCall(message, runtime);
 
     case 'shutdown':
       return jsonRpcResult(message.id, null);
@@ -75,6 +102,53 @@ export async function handleMcpMessage(message: unknown, runtime: RuntimeConfig)
     default:
       return jsonRpcError(message.id, -32601, `Method not found: ${message.method ?? '<missing>'}`);
   }
+}
+
+async function handleToolCall(message: JsonRpcRequest, runtime: RuntimeConfig): Promise<JsonRpcResponse> {
+  const name = typeof message.params?.name === 'string' ? message.params.name : undefined;
+  const argumentsValue = isRecord(message.params?.arguments) ? message.params.arguments : {};
+
+  if (name === 'projects_validate_setup') {
+    const projects = await selectedProjects(runtime, argumentsValue.projectId);
+    if (projects.length === 0) {
+      return jsonRpcResult(message.id ?? null, {
+        content: [{ type: 'text', text: JSON.stringify({ status: 'invalid', error: 'Project not found' }, null, 2) }],
+        isError: true
+      });
+    }
+    const setup = await validateProjectWorkflowSetups(projects);
+    return jsonRpcResult(message.id ?? null, {
+      content: [{ type: 'text', text: JSON.stringify({ status: setup.every((validation) => validation.ok) ? 'ok' : 'invalid', setup }, null, 2) }],
+      isError: setup.some((validation) => !validation.ok)
+    });
+  }
+
+  if (name === 'workflows_render') {
+    const projects = await selectedProjects(runtime, argumentsValue.projectId);
+    if (projects.length === 0) {
+      return jsonRpcResult(message.id ?? null, {
+        content: [{ type: 'text', text: JSON.stringify({ status: 'invalid', error: 'Project not found' }, null, 2) }],
+        isError: true
+      });
+    }
+    const workflow = await writeProjectWorkflow(projects[0]);
+    return jsonRpcResult(message.id ?? null, {
+      content: [{ type: 'text', text: JSON.stringify({ status: 'ok', workflow }, null, 2) }],
+      isError: false
+    });
+  }
+
+  return jsonRpcError(message.id ?? null, -32602, `Unknown tool: ${name ?? '<missing>'}`);
+}
+
+async function selectedProjects(runtime: RuntimeConfig, projectId: unknown) {
+  const projects = await createProjectRegistryService(runtime.configPath).list();
+
+  if (typeof projectId !== 'string') {
+    return projects;
+  }
+
+  return projects.filter((project) => project.id === projectId);
 }
 
 export function jsonRpcResult(id: string | number | null, result: unknown): JsonRpcResponse {
@@ -96,6 +170,10 @@ function isJsonRpcRequest(message: unknown): message is JsonRpcRequest {
 
   const candidate = message as Record<string, unknown>;
   return candidate.jsonrpc === '2.0' && typeof candidate.method === 'string';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object';
 }
 
 function readProtocolVersion(params: Record<string, unknown> | undefined): string {

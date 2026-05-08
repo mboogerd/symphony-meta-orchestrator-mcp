@@ -12,3 +12,11 @@ export {
   validateProjectRegistry
 } from './services/registry/index.ts';
 export type { ManagedProject, ManagedProjectRegistry } from './services/registry/index.ts';
+export {
+  renderProjectWorkflow,
+  validateProjectWorkflowSetup,
+  validateProjectWorkflowSetups,
+  WorkflowSetupValidationError,
+  writeProjectWorkflow
+} from './services/workflow/index.ts';
+export type { WorkflowRenderResult, WorkflowSetupIssue, WorkflowSetupValidation } from './services/workflow/index.ts';
