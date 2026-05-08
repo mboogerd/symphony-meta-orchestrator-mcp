@@ -7,6 +7,7 @@ export type RuntimeConfig = {
   cwd: string;
   configPath: string;
   configExists: boolean;
+  env: Environment;
   envFile: LoadedEnvironment;
   logLevel: LogLevel;
   nodeEnv: string;
@@ -28,6 +29,7 @@ export function createRuntimeConfig(options: RuntimeConfigOptions = {}): Runtime
     cwd,
     configPath,
     configExists: existsSync(configPath),
+    env,
     envFile,
     logLevel: normalizeLogLevel(env.SYMPHONY_LOG_LEVEL ?? env.LOG_LEVEL),
     nodeEnv: env.NODE_ENV ?? 'development'

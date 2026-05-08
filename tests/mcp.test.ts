@@ -23,7 +23,7 @@ test('MCP initialize returns no-op server capabilities', async () => {
   });
 });
 
-test('MCP tools/list exposes workflow setup tools', async () => {
+test('MCP tools/list exposes control-plane tools', async () => {
   const runtime = createRuntimeConfig({ env: {}, argv: [], cwd: process.cwd() });
 
   const response = await handleMcpMessage({ jsonrpc: '2.0', id: 'tools', method: 'tools/list' }, runtime);
@@ -31,12 +31,21 @@ test('MCP tools/list exposes workflow setup tools', async () => {
   assert.equal(response?.jsonrpc, '2.0');
   const tools = ((response?.result as Record<string, unknown>).tools as Array<Record<string, unknown>>);
   assert.deepEqual(tools.map((tool) => tool.name), [
-    'projects_validate_setup',
-    'workflows_render',
-    'runners_start',
-    'runners_stop',
-    'runners_restart',
-    'runners_status'
+    'list_projects',
+    'get_project',
+    'register_project',
+    'validate_project',
+    'generate_workflow',
+    'create_linear_project',
+    'create_issue',
+    'create_issue_batch',
+    'link_issue_dependency',
+    'move_issue_state',
+    'start_runner',
+    'stop_runner',
+    'restart_runner',
+    'get_runner_status',
+    'tail_runner_logs'
   ]);
 });
 
@@ -80,7 +89,7 @@ test('MCP resources/list exposes managed projects from YAML registry', async () 
   }
 });
 
-test('MCP projects_validate_setup returns structured invalid setup output', async () => {
+test('MCP validate_project returns structured invalid setup output', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'mrb9-mcp-invalid-'));
   const configPath = join(cwd, 'registry.yaml');
 
@@ -105,11 +114,12 @@ test('MCP projects_validate_setup returns structured invalid setup output', asyn
       jsonrpc: '2.0',
       id: 'call',
       method: 'tools/call',
-      params: { name: 'projects_validate_setup', arguments: { projectId: 'meta-orchestrator' } }
+      params: { name: 'validate_project', arguments: { projectId: 'meta-orchestrator' } }
     }, runtime);
 
     const result = response?.result as Record<string, unknown>;
     assert.equal(result.isError, true);
+    assert.equal((result.structuredContent as Record<string, unknown>).status, 'invalid');
     const text = ((result.content as Array<Record<string, string>>)[0]).text;
     const output = JSON.parse(text);
     assert.equal(output.status, 'invalid');
@@ -117,4 +127,63 @@ test('MCP projects_validate_setup returns structured invalid setup output', asyn
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
+});
+
+test('MCP registry tools can register, list, and get projects', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb12-mcp-registry-'));
+  const configPath = join(cwd, 'registry.yaml');
+  const project = {
+    id: 'meta-orchestrator',
+    name: 'Meta Orchestrator',
+    linear: { teamKey: 'MRB', projectKey: 'META' },
+    repo: { path: join(cwd, 'repo') },
+    symphony: { workspacePath: join(cwd, 'workspace'), mcpPort: 4100 }
+  };
+
+  try {
+    const runtime = createRuntimeConfig({ env: {}, argv: ['--config', configPath], cwd: process.cwd() });
+    const registered = await handleMcpMessage({
+      jsonrpc: '2.0',
+      id: 'register',
+      method: 'tools/call',
+      params: { name: 'register_project', arguments: { project } }
+    }, runtime);
+    assert.equal(((registered?.result as Record<string, unknown>).structuredContent as Record<string, unknown>).status, 'ok');
+
+    const listed = await handleMcpMessage({
+      jsonrpc: '2.0',
+      id: 'list',
+      method: 'tools/call',
+      params: { name: 'list_projects', arguments: {} }
+    }, runtime);
+    const projects = (((listed?.result as Record<string, unknown>).structuredContent as Record<string, unknown>).projects as unknown[]);
+    assert.equal(projects.length, 1);
+
+    const fetched = await handleMcpMessage({
+      jsonrpc: '2.0',
+      id: 'get',
+      method: 'tools/call',
+      params: { name: 'get_project', arguments: { projectId: 'meta-orchestrator' } }
+    }, runtime);
+    const fetchedProject = (((fetched?.result as Record<string, unknown>).structuredContent as Record<string, unknown>).project as Record<string, unknown>);
+    assert.equal(fetchedProject.name, 'Meta Orchestrator');
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('MCP Linear tools return structured missing auth errors', async () => {
+  const runtime = createRuntimeConfig({ env: {}, argv: [], cwd: process.cwd() });
+  const response = await handleMcpMessage({
+    jsonrpc: '2.0',
+    id: 'linear',
+    method: 'tools/call',
+    params: { name: 'create_issue', arguments: { title: 'Test', teamKey: 'MRB' } }
+  }, runtime);
+
+  const result = response?.result as Record<string, unknown>;
+  const structured = result.structuredContent as { status: string; error: { code: string } };
+  assert.equal(result.isError, true);
+  assert.equal(structured.status, 'error');
+  assert.equal(structured.error.code, 'missing_api_key');
 });

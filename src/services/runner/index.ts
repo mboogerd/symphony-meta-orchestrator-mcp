@@ -56,6 +56,15 @@ export type RunnerManager = {
   stop(project: ManagedProject): Promise<RunnerStatus>;
   restart(project: ManagedProject): Promise<RunnerStartResult>;
   status(project: ManagedProject): Promise<RunnerStatus>;
+  tailLogs(project: ManagedProject, lineCount?: number): Promise<RunnerLogTail>;
+};
+
+export type RunnerLogTail = {
+  id: string;
+  logPath: string;
+  lines: string[];
+  lineCount: number;
+  truncated: boolean;
 };
 
 const DEFAULT_RUNNER_COMMAND = 'npx --yes symphony';
@@ -175,6 +184,29 @@ export function createRunnerManager(options: RunnerManagerOptions = {}): RunnerM
       const nextStatus = statusFromState(project, paths, state, running ? 'running' : 'missing', details);
       await writeState(paths.statePath, { ...state, latestHeartbeat: checkedAt, status: details });
       return nextStatus;
+    },
+
+    async tailLogs(project: ManagedProject, lineCount = 100): Promise<RunnerLogTail> {
+      const paths = runnerPaths(project);
+      const requestedLineCount = Math.max(1, Math.min(Math.trunc(lineCount), 1000));
+      let contents = '';
+
+      try {
+        contents = await readFile(paths.logPath, 'utf8');
+      } catch (error) {
+        if (!(isNodeError(error) && error.code === 'ENOENT')) {
+          throw error;
+        }
+      }
+
+      const lines = contents.length === 0 ? [] : contents.replace(/\r?\n$/, '').split(/\r?\n/);
+      return {
+        id: project.id,
+        logPath: paths.logPath,
+        lines: lines.slice(-requestedLineCount),
+        lineCount: lines.length,
+        truncated: lines.length > requestedLineCount
+      };
     }
   };
 }
