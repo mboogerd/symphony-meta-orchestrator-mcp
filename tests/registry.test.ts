@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync, rmSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -45,7 +45,10 @@ const baseProject: ManagedProject = {
   },
   codex: {
     threadSandbox: 'workspace-write',
-    turnSandbox: 'workspace-write'
+    turnSandbox: {
+      type: 'workspaceWrite',
+      networkAccess: true
+    }
   }
 };
 
@@ -95,6 +98,50 @@ test('registry rejects invalid entries with clear validation errors', async () =
         return true;
       }
     );
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('registry normalizes legacy string turn sandbox policies', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'mrb23-registry-policy-'));
+  const configPath = join(cwd, 'symphony.registry.yaml');
+  const registry = createProjectRegistryService(configPath);
+
+  try {
+    writeFileSync(configPath, [
+      'version: 2',
+      'projects:',
+      '  - id: meta-orchestrator',
+      '    name: Meta Orchestrator',
+      '    tracker:',
+      '      kind: linear',
+      '      teamKey: MRB',
+      '      teamId: linear-team-id',
+      '      projectId: linear-project-id',
+      '      projectSlug: meta-orchestrator',
+      '    repo:',
+      '      path: /tmp/symphony-meta-orchestrator-mcp',
+      '      remoteUrl: https://github.com/mboogerd/symphony-meta-orchestrator-mcp.git',
+      '      defaultBranch: main',
+      '      cloneSource: git@github.com:mboogerd/symphony-meta-orchestrator-mcp.git',
+      '    workflow:',
+      '      source: repo',
+      '      path: WORKFLOW.md',
+      '    symphony:',
+      '      command: mise',
+      '      runnerPort: 4101',
+      '      workspaceRoot: /tmp/symphony-workspaces/meta-orchestrator',
+      '      logsRoot: /tmp/symphony-logs/meta-orchestrator',
+      '    codex:',
+      '      threadSandbox: workspace-write',
+      '      turnSandbox: workspace-write',
+      ''
+    ].join('\n'));
+
+    assert.deepEqual((await registry.load()).projects[0]?.codex.turnSandbox, {
+      type: 'workspaceWrite'
+    });
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

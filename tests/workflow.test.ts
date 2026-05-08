@@ -48,7 +48,10 @@ test('repo-owned workflow preserves prompt body and injects runtime front matter
     assert.equal(parsed.frontMatter.agent.max_turns, 20);
     assert.equal(parsed.frontMatter.codex.approval_policy, 'never');
     assert.equal(parsed.frontMatter.codex.thread_sandbox, 'workspace-write');
-    assert.equal(parsed.frontMatter.codex.turn_sandbox_policy, 'workspace-write');
+    assert.deepEqual(parsed.frontMatter.codex.turn_sandbox_policy, {
+      type: 'workspaceWrite',
+      networkAccess: true
+    });
     assert.equal(parsed.frontMatter.custom.keep, true);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
@@ -193,13 +196,67 @@ test('operational validation detects missing runner command and read-only turn s
       logsRoot: join(cwd, 'logs'),
       command: 'definitely-missing-symphony-runner'
     });
-    project.codex.turnSandbox = 'read-only';
+    project.codex.turnSandbox = { type: 'readOnly' };
 
     const validation = await validateProjectWorkflowSetup(project);
 
     assert.equal(validation.ok, false);
     assert.equal(validation.subsystems.runner.errors[0]?.code, 'runner_command_missing');
     assert.equal(validation.subsystems.codexPolicy.errors[0]?.code, 'codex_turn_sandbox_missing');
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('workflow renders network-enabled workspace-write and danger-full-access turn policies', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb23-workflow-policy-'));
+  const repoPath = join(cwd, 'repo');
+  const workspaceRoot = join(cwd, 'workspace');
+
+  try {
+    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    writeFileSync(join(repoPath, 'WORKFLOW.md'), 'Prompt body.');
+    const project = managedProject({ repoPath, workspaceRoot });
+
+    project.codex.turnSandbox = {
+      type: 'workspaceWrite',
+      networkAccess: true,
+      writableRoots: ['/tmp/cache']
+    };
+    assert.deepEqual(parseWorkflow((await renderProjectWorkflow(project)).content).frontMatter.codex.turn_sandbox_policy, {
+      type: 'workspaceWrite',
+      networkAccess: true,
+      writableRoots: ['/tmp/cache']
+    });
+
+    project.codex.threadSandbox = 'danger-full-access';
+    project.codex.turnSandbox = { type: 'dangerFullAccess' };
+    assert.deepEqual(parseWorkflow((await renderProjectWorkflow(project)).content).frontMatter.codex.turn_sandbox_policy, {
+      type: 'dangerFullAccess'
+    });
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('operational validation requires network access for git and GitHub workflows', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb23-policy-network-'));
+  const repoPath = join(cwd, 'repo');
+
+  try {
+    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    writeFileSync(join(repoPath, 'WORKFLOW.md'), 'Use git and GitHub.');
+    const project = managedProject({
+      repoPath,
+      workspaceRoot: join(cwd, 'workspace'),
+      logsRoot: join(cwd, 'logs')
+    });
+    project.codex.turnSandbox = { type: 'workspaceWrite' };
+
+    const validation = await validateProjectWorkflowSetup(project);
+
+    assert.equal(validation.ok, false);
+    assert.equal(validation.subsystems.codexPolicy.errors[0]?.field, 'codex.turnSandbox.networkAccess');
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

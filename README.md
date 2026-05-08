@@ -92,7 +92,8 @@ Warnings call out degraded readiness that may still be acceptable locally, such
 as a missing local default branch or absent git origin remote. Errors block real
 runner readiness, such as a missing repo path, invalid repo-owned workflow,
 unavailable runner port, missing runner command, missing writable roots, or a
-read-only Codex turn sandbox for workflows that expect git/GitHub operations.
+Codex turn sandbox that lacks filesystem or network access for workflows that
+expect git/GitHub operations.
 Set `SYMPHONY_VALIDATE_LINEAR=1` for CLI validation, or pass
 `validateLinear: true` to MCP `validate_project`, to require `LINEAR_API_KEY`
 and validate Linear-specific registry fields.
@@ -132,8 +133,32 @@ projects:
       dashboardUrl: http://localhost:4101
     codex:
       threadSandbox: workspace-write
-      turnSandbox: workspace-write
+      turnSandbox:
+        type: workspaceWrite
+        networkAccess: true
 ```
+
+`codex.threadSandbox` is the Codex thread sandbox mode passed to Symphony as
+`codex.thread_sandbox`. Supported registry values are `read-only`,
+`workspace-write`, and `danger-full-access`.
+
+`codex.turnSandbox` is the Codex turn sandbox policy map rendered into
+WORKFLOW.md as `codex.turn_sandbox_policy`. Use these common policies:
+
+- `type: readOnly` for inspection-only runs. Set `networkAccess: true` only
+  when the workflow needs network reads without repository writes.
+- `type: workspaceWrite` for normal implementation runs. Set
+  `networkAccess: true` when the workflow mentions git, GitHub, clone, fetch,
+  push, pull, or PR operations.
+- `type: dangerFullAccess` only for fully trusted workspaces that need host
+  filesystem semantics beyond the workspace-write sandbox.
+
+Existing registry files that use legacy string shorthand for `turnSandbox`
+continue to load. The shorthand is normalized as `read-only` ->
+`{ type: readOnly }`, `workspace-write` -> `{ type: workspaceWrite }`, and
+`danger-full-access` -> `{ type: dangerFullAccess }`. Add
+`networkAccess: true` explicitly for workspace-write policies that must perform
+git or GitHub operations.
 
 The CLI exposes health, version, and registry list/validate commands. The MCP
 stdio entrypoint exposes managed projects through `resources/list` so later

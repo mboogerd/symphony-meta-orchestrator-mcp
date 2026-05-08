@@ -39,7 +39,10 @@ export function managedProject(paths: {
     },
     codex: {
       threadSandbox: 'workspace-write',
-      turnSandbox: 'workspace-write'
+      turnSandbox: {
+        type: 'workspaceWrite',
+        networkAccess: true
+      }
     }
   };
 }
@@ -80,7 +83,19 @@ export function managedProjectYaml(project: ManagedProject): string {
     ...(project.symphony.dashboardUrl === undefined ? [] : [`      dashboardUrl: ${project.symphony.dashboardUrl}`]),
     '    codex:',
     `      threadSandbox: ${project.codex.threadSandbox}`,
-    `      turnSandbox: ${project.codex.turnSandbox}`,
+    '      turnSandbox:',
+    ...renderTurnSandboxYaml(project.codex.turnSandbox, 8),
     ''
   ].join('\n');
+}
+
+function renderTurnSandboxYaml(value: ManagedProject['codex']['turnSandbox'], spaces: number): string[] {
+  const indent = ' '.repeat(spaces);
+  return Object.entries(value).flatMap(([key, entry]) => {
+    if (Array.isArray(entry)) {
+      return [`${indent}${key}:`, ...entry.map((item) => `${indent}  - ${item}`)];
+    }
+
+    return [`${indent}${key}: ${entry}`];
+  });
 }
