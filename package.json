@@ -27,5 +27,8 @@
     "linear",
     "symphony"
   ],
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "dependencies": {
+    "yaml": "^2.8.4"
+  }
 }

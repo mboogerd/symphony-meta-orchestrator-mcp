@@ -1,5 +1,6 @@
 import type { RuntimeConfig } from '../config/runtime.ts';
 import { packageInfo } from '../package-info.ts';
+import { createProjectRegistryService } from '../services/registry/index.ts';
 
 export type JsonRpcRequest = {
   jsonrpc: '2.0';
@@ -18,7 +19,7 @@ export type JsonRpcResponse = {
   };
 };
 
-export function handleMcpMessage(message: unknown, runtime: RuntimeConfig): JsonRpcResponse | undefined {
+export async function handleMcpMessage(message: unknown, runtime: RuntimeConfig): Promise<JsonRpcResponse | undefined> {
   if (!isJsonRpcRequest(message)) {
     return jsonRpcError(null, -32600, 'Invalid Request');
   }
@@ -53,8 +54,17 @@ export function handleMcpMessage(message: unknown, runtime: RuntimeConfig): Json
     case 'prompts/list':
       return jsonRpcResult(message.id, { prompts: [] });
 
-    case 'resources/list':
-      return jsonRpcResult(message.id, { resources: [] });
+    case 'resources/list': {
+      const projects = await createProjectRegistryService(runtime.configPath).list();
+      return jsonRpcResult(message.id, {
+        resources: projects.map((project) => ({
+          uri: `symphony://projects/${project.id}`,
+          name: project.name,
+          description: `${project.linear.teamKey} managed project at ${project.repo.path}`,
+          mimeType: 'application/yaml'
+        }))
+      });
+    }
 
     case 'tools/list':
       return jsonRpcResult(message.id, { tools: [] });
