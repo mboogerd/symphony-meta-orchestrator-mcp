@@ -4,6 +4,7 @@ import { createRuntimeConfig } from '../config/runtime.ts';
 import { createLogger } from '../logging/logger.ts';
 import { packageInfo } from '../package-info.ts';
 import { createProjectRegistryService, ProjectRegistryValidationError } from '../services/registry/index.ts';
+import { createRunnerManager } from '../services/runner/index.ts';
 import {
   validateProjectWorkflowSetups,
   WorkflowSetupValidationError,
@@ -97,6 +98,37 @@ export async function runCli(
     }
   }
 
+  if (command.startsWith('runners:')) {
+    try {
+      const project = await selectedProject(runtime.configPath, argv);
+      if (project === undefined) {
+        stderr.write(`Project not found${readOption(argv, ['--project', '--project-id']) === undefined ? '' : `: ${readOption(argv, ['--project', '--project-id'])}`}\n`);
+        return 1;
+      }
+
+      const manager = createRunnerManager();
+      if (command === 'runners:start') {
+        stdout.write(`${JSON.stringify({ status: 'ok', runner: await manager.start(project) }, null, 2)}\n`);
+        return 0;
+      }
+      if (command === 'runners:stop') {
+        stdout.write(`${JSON.stringify({ status: 'ok', runner: await manager.stop(project) }, null, 2)}\n`);
+        return 0;
+      }
+      if (command === 'runners:restart') {
+        stdout.write(`${JSON.stringify({ status: 'ok', runner: await manager.restart(project) }, null, 2)}\n`);
+        return 0;
+      }
+      if (command === 'runners:status') {
+        stdout.write(`${JSON.stringify({ status: 'ok', runner: await manager.status(project) }, null, 2)}\n`);
+        return 0;
+      }
+    } catch (error) {
+      stderr.write(`${formatError(error)}\n`);
+      return 1;
+    }
+  }
+
   stderr.write(`Unknown command: ${command}\n\n${helpText()}`);
   return 1;
 }
@@ -129,6 +161,10 @@ function helpText(): string {
     '  projects:list      List managed projects from the registry',
     '  projects:validate  Validate the managed-project registry and workflow setup',
     '  workflows:render   Render WORKFLOW.md for a managed project',
+    '  runners:start      Start the Symphony runner for a managed project',
+    '  runners:stop       Stop the Symphony runner for a managed project',
+    '  runners:restart    Restart the Symphony runner for a managed project',
+    '  runners:status     Inspect the Symphony runner for a managed project',
     '  version    Print package name and version',
     '',
     'Options:',
@@ -137,6 +173,12 @@ function helpText(): string {
     '  -h, --help                     Print this help text',
     ''
   ].join('\n');
+}
+
+async function selectedProject(configPath: string, argv: string[]) {
+  const projectId = readOption(argv, ['--project', '--project-id']);
+  const projects = await createProjectRegistryService(configPath).list();
+  return projectId === undefined ? projects[0] : projects.find((candidate) => candidate.id === projectId);
 }
 
 function formatError(error: unknown): string {

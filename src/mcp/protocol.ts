@@ -1,6 +1,7 @@
 import type { RuntimeConfig } from '../config/runtime.ts';
 import { packageInfo } from '../package-info.ts';
 import { createProjectRegistryService } from '../services/registry/index.ts';
+import { createRunnerManager } from '../services/runner/index.ts';
 import { validateProjectWorkflowSetups, writeProjectWorkflow } from '../services/workflow/index.ts';
 
 export type JsonRpcRequest = {
@@ -89,6 +90,46 @@ export async function handleMcpMessage(message: unknown, runtime: RuntimeConfig)
                 projectId: { type: 'string' }
               }
             }
+          },
+          {
+            name: 'runners_start',
+            description: 'Start the Symphony runner for a managed project.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                projectId: { type: 'string' }
+              }
+            }
+          },
+          {
+            name: 'runners_stop',
+            description: 'Stop the Symphony runner for a managed project.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                projectId: { type: 'string' }
+              }
+            }
+          },
+          {
+            name: 'runners_restart',
+            description: 'Restart the Symphony runner for a managed project.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                projectId: { type: 'string' }
+              }
+            }
+          },
+          {
+            name: 'runners_status',
+            description: 'Inspect the Symphony runner for a managed project.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                projectId: { type: 'string' }
+              }
+            }
           }
         ]
       });
@@ -134,6 +175,29 @@ async function handleToolCall(message: JsonRpcRequest, runtime: RuntimeConfig): 
     const workflow = await writeProjectWorkflow(projects[0]);
     return jsonRpcResult(message.id ?? null, {
       content: [{ type: 'text', text: JSON.stringify({ status: 'ok', workflow }, null, 2) }],
+      isError: false
+    });
+  }
+
+  if (name === 'runners_start' || name === 'runners_stop' || name === 'runners_restart' || name === 'runners_status') {
+    const projects = await selectedProjects(runtime, argumentsValue.projectId);
+    if (projects.length === 0) {
+      return jsonRpcResult(message.id ?? null, {
+        content: [{ type: 'text', text: JSON.stringify({ status: 'invalid', error: 'Project not found' }, null, 2) }],
+        isError: true
+      });
+    }
+
+    const manager = createRunnerManager();
+    const runner = name === 'runners_start'
+      ? await manager.start(projects[0])
+      : name === 'runners_stop'
+        ? await manager.stop(projects[0])
+        : name === 'runners_restart'
+          ? await manager.restart(projects[0])
+          : await manager.status(projects[0]);
+    return jsonRpcResult(message.id ?? null, {
+      content: [{ type: 'text', text: JSON.stringify({ status: 'ok', runner }, null, 2) }],
       isError: false
     });
   }

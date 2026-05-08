@@ -1,0 +1,136 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test from 'node:test';
+import { createRunnerManager, type ManagedProject } from '../src/index.ts';
+
+test('runner manager starts, reports, prevents duplicate starts, stops, and restarts one project process', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb10-runner-'));
+  const repoPath = join(cwd, 'repo');
+  const workspacePath = join(cwd, 'workspace');
+  const logsPath = join(cwd, 'logs');
+
+  try {
+    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    const project = managedProject({ repoPath, workspacePath, logsPath });
+    const manager = createRunnerManager({
+      command: process.execPath,
+      commandArgs: ['-e', 'setInterval(() => {}, 1000)']
+    });
+
+    const started = await manager.start(project);
+    assert.equal(started.started, true);
+    assert.equal(started.status.state, 'running');
+    assert.equal(started.status.port, 4310);
+    assert.equal(started.status.dashboardUrl, 'http://localhost:4310');
+    assert.equal(started.status.workflowPath, join(workspacePath, 'WORKFLOW.md'));
+    assert.equal(started.status.logPath, join(logsPath, 'meta-orchestrator.runner.log'));
+    assert.equal(existsSync(started.status.statePath), true);
+    assert.equal(existsSync(started.status.workflowPath), true);
+
+    const duplicate = await manager.start(project);
+    assert.equal(duplicate.started, false);
+    assert.equal(duplicate.status.pid, started.status.pid);
+    assert.match(duplicate.status.details.message, /already running/);
+
+    const status = await manager.status(project);
+    assert.equal(status.state, 'running');
+    assert.equal(status.pid, started.status.pid);
+    assert.equal(typeof status.latestHeartbeat, 'string');
+
+    const stopped = await manager.stop(project);
+    assert.equal(stopped.state, 'stopped');
+    assert.equal(stopped.pid, started.status.pid);
+
+    const restarted = await manager.restart(project);
+    assert.equal(restarted.started, true);
+    assert.equal(restarted.status.state, 'running');
+    assert.notEqual(restarted.status.pid, started.status.pid);
+
+    await manager.stop(project);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('runner status returns idle details before a project has been started', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb10-runner-idle-'));
+
+  try {
+    const project = managedProject({
+      repoPath: join(cwd, 'repo'),
+      workspacePath: join(cwd, 'workspace'),
+      logsPath: join(cwd, 'logs')
+    });
+    const manager = createRunnerManager({ command: process.execPath, commandArgs: ['-e', 'setInterval(() => {}, 1000)'] });
+
+    const status = await manager.status(project);
+    assert.equal(status.state, 'idle');
+    assert.equal(status.port, 4310);
+    assert.equal(status.dashboardUrl, 'http://localhost:4310');
+    assert.equal(status.workflowPath, join(cwd, 'workspace', 'WORKFLOW.md'));
+    assert.match(status.details.message, /No runner state file/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('CLI runners:status reports runner lifecycle fields from the registry', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb10-cli-runner-'));
+  const configPath = join(cwd, 'registry.yaml');
+
+  try {
+    writeFileSync(configPath, [
+      'version: 1',
+      'projects:',
+      '  - id: meta-orchestrator',
+      '    name: Meta Orchestrator',
+      '    linear:',
+      '      teamKey: MRB',
+      '      projectKey: META',
+      '    repo:',
+      `      path: ${join(cwd, 'repo')}`,
+      '    symphony:',
+      `      workspacePath: ${join(cwd, 'workspace')}`,
+      `      logsPath: ${join(cwd, 'logs')}`,
+      '      mcpPort: 4100',
+      '      runnerPort: 4310'
+    ].join('\n'));
+
+    const result = spawnSync(process.execPath, ['src/cli/index.ts', 'runners:status', '--config', configPath], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      env: { ...process.env, SYMPHONY_LOG_LEVEL: 'silent' }
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.runner.state, 'idle');
+    assert.equal(output.runner.dashboardUrl, 'http://localhost:4310');
+    assert.equal(output.runner.workflowPath, join(cwd, 'workspace', 'WORKFLOW.md'));
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+function managedProject(paths: { repoPath: string; workspacePath: string; logsPath: string }): ManagedProject {
+  return {
+    id: 'meta-orchestrator',
+    name: 'Meta Orchestrator',
+    linear: {
+      teamKey: 'MRB',
+      projectKey: 'META'
+    },
+    repo: {
+      path: paths.repoPath
+    },
+    symphony: {
+      workspacePath: paths.workspacePath,
+      logsPath: paths.logsPath,
+      mcpPort: 4100,
+      runnerPort: 4310
+    }
+  };
+}
