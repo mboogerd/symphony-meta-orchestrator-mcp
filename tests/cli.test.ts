@@ -4,6 +4,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { managedProject, managedProjectYaml } from './project-fixtures.ts';
 
 test('CLI health command returns JSON status', () => {
   const result = spawnSync(process.execPath, ['src/cli/index.ts', 'health'], {
@@ -33,20 +34,10 @@ test('CLI projects:list reads managed projects from YAML registry', () => {
   const configPath = join(cwd, 'registry.yaml');
 
   try {
-    writeFileSync(configPath, [
-      'version: 1',
-      'projects:',
-      '  - id: meta-orchestrator',
-      '    name: Meta Orchestrator',
-      '    linear:',
-      '      teamKey: MRB',
-      '      projectKey: META',
-      '    repo:',
-      '      path: /tmp/meta-orchestrator',
-      '    symphony:',
-      '      workspacePath: /tmp/workspaces/meta-orchestrator',
-      '      mcpPort: 4100'
-    ].join('\n'));
+    writeFileSync(configPath, managedProjectYaml(managedProject({
+      repoPath: '/tmp/meta-orchestrator',
+      workspaceRoot: '/tmp/workspaces/meta-orchestrator'
+    })));
 
     const result = spawnSync(process.execPath, ['src/cli/index.ts', 'projects:list', '--config', configPath], {
       cwd: process.cwd(),
@@ -56,7 +47,7 @@ test('CLI projects:list reads managed projects from YAML registry', () => {
 
     assert.equal(result.status, 0, result.stderr);
     const output = JSON.parse(result.stdout);
-    assert.equal(output.projects[0].linear.teamKey, 'MRB');
+    assert.equal(output.projects[0].tracker.teamKey, 'MRB');
     assert.equal(output.projects[0].repo.path, '/tmp/meta-orchestrator');
   } finally {
     rmSync(cwd, { recursive: true, force: true });
@@ -68,20 +59,10 @@ test('CLI projects list reads managed projects from YAML registry', () => {
   const configPath = join(cwd, 'registry.yaml');
 
   try {
-    writeFileSync(configPath, [
-      'version: 1',
-      'projects:',
-      '  - id: meta-orchestrator',
-      '    name: Meta Orchestrator',
-      '    linear:',
-      '      teamKey: MRB',
-      '      projectKey: META',
-      '    repo:',
-      '      path: /tmp/meta-orchestrator',
-      '    symphony:',
-      '      workspacePath: /tmp/workspaces/meta-orchestrator',
-      '      mcpPort: 4100'
-    ].join('\n'));
+    writeFileSync(configPath, managedProjectYaml(managedProject({
+      repoPath: '/tmp/meta-orchestrator',
+      workspaceRoot: '/tmp/workspaces/meta-orchestrator'
+    })));
 
     const result = spawnSync(process.execPath, ['src/cli/index.ts', 'projects', 'list', '--config', configPath], {
       cwd: process.cwd(),
@@ -102,20 +83,10 @@ test('CLI projects:validate fails with structured setup output for missing repo 
   const configPath = join(cwd, 'registry.yaml');
 
   try {
-    writeFileSync(configPath, [
-      'version: 1',
-      'projects:',
-      '  - id: meta-orchestrator',
-      '    name: Meta Orchestrator',
-      '    linear:',
-      '      teamKey: MRB',
-      '      projectKey: META',
-      '    repo:',
-      `      path: ${join(cwd, 'missing-repo')}`,
-      '    symphony:',
-      `      workspacePath: ${join(cwd, 'workspace')}`,
-      '      mcpPort: 4100'
-    ].join('\n'));
+    writeFileSync(configPath, managedProjectYaml(managedProject({
+      repoPath: join(cwd, 'missing-repo'),
+      workspaceRoot: join(cwd, 'workspace')
+    })));
 
     const result = spawnSync(process.execPath, ['src/cli/index.ts', 'projects:validate', '--config', configPath], {
       cwd: process.cwd(),
@@ -137,20 +108,10 @@ test('CLI project validate fails with structured setup output for missing repo p
   const configPath = join(cwd, 'registry.yaml');
 
   try {
-    writeFileSync(configPath, [
-      'version: 1',
-      'projects:',
-      '  - id: meta-orchestrator',
-      '    name: Meta Orchestrator',
-      '    linear:',
-      '      teamKey: MRB',
-      '      projectKey: META',
-      '    repo:',
-      `      path: ${join(cwd, 'missing-repo')}`,
-      '    symphony:',
-      `      workspacePath: ${join(cwd, 'workspace')}`,
-      '      mcpPort: 4100'
-    ].join('\n'));
+    writeFileSync(configPath, managedProjectYaml(managedProject({
+      repoPath: join(cwd, 'missing-repo'),
+      workspaceRoot: join(cwd, 'workspace')
+    })));
 
     const result = spawnSync(process.execPath, ['src/cli/index.ts', 'project', 'validate', '--config', configPath], {
       cwd: process.cwd(),
@@ -176,21 +137,7 @@ test('CLI workflows:render writes project workflow with required handoff paths',
 
   try {
     spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
-    writeFileSync(configPath, [
-      'version: 1',
-      'projects:',
-      '  - id: meta-orchestrator',
-      '    name: Meta Orchestrator',
-      '    linear:',
-      '      teamKey: MRB',
-      '      projectKey: META',
-      '    repo:',
-      `      path: ${repoPath}`,
-      '    symphony:',
-      `      workspacePath: ${workspacePath}`,
-      `      logsPath: ${logsPath}`,
-      '      mcpPort: 4100'
-    ].join('\n'));
+    writeFileSync(configPath, managedProjectYaml(managedProject({ repoPath, workspaceRoot: workspacePath, logsRoot: logsPath })));
 
     const result = spawnSync(process.execPath, ['src/cli/index.ts', 'workflows:render', '--config', configPath], {
       cwd: process.cwd(),
@@ -219,21 +166,7 @@ test('CLI workflow render then project validate covers local registry smoke path
 
   try {
     spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
-    writeFileSync(configPath, [
-      'version: 1',
-      'projects:',
-      '  - id: meta-orchestrator',
-      '    name: Meta Orchestrator',
-      '    linear:',
-      '      teamKey: MRB',
-      '      projectKey: META',
-      '    repo:',
-      `      path: ${repoPath}`,
-      '    symphony:',
-      `      workspacePath: ${workspacePath}`,
-      `      logsPath: ${logsPath}`,
-      '      mcpPort: 4100'
-    ].join('\n'));
+    writeFileSync(configPath, managedProjectYaml(managedProject({ repoPath, workspaceRoot: workspacePath, logsRoot: logsPath })));
 
     const render = spawnSync(process.execPath, ['src/cli/index.ts', 'workflow', 'render', '--config', configPath], {
       cwd: process.cwd(),
@@ -267,24 +200,14 @@ test('CLI runner start status stop covers local runner smoke path', () => {
       'setInterval(() => {}, 1000);'
     ].join('\n'));
     chmodSync(runnerPath, 0o755);
-    writeFileSync(configPath, [
-      'version: 1',
-      'projects:',
-      '  - id: meta-orchestrator',
-      '    name: Meta Orchestrator',
-      '    linear:',
-      '      teamKey: MRB',
-      '      projectKey: META',
-      '    repo:',
-      `      path: ${repoPath}`,
-      '    symphony:',
-      `      workspacePath: ${join(cwd, 'workspace')}`,
-      `      logsPath: ${join(cwd, 'logs')}`,
-      '      mcpPort: 4100',
-      '      runnerPort: 4310'
-    ].join('\n'));
+    writeFileSync(configPath, managedProjectYaml(managedProject({
+      repoPath,
+      workspaceRoot: join(cwd, 'workspace'),
+      logsRoot: join(cwd, 'logs'),
+      command: runnerPath
+    })));
 
-    const env = { ...process.env, SYMPHONY_LOG_LEVEL: 'silent', SYMPHONY_RUNNER_COMMAND: runnerPath };
+    const env = { ...process.env, SYMPHONY_LOG_LEVEL: 'silent' };
     const start = spawnSync(process.execPath, ['src/cli/index.ts', 'runner', 'start', '--config', configPath], {
       cwd: process.cwd(),
       encoding: 'utf8',

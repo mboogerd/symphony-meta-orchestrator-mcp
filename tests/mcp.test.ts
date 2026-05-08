@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { createRuntimeConfig, handleMcpMessage } from '../src/index.ts';
+import { managedProject, managedProjectYaml } from './project-fixtures.ts';
 
 test('MCP initialize returns no-op server capabilities', async () => {
   const runtime = createRuntimeConfig({ env: {}, argv: [], cwd: process.cwd() });
@@ -54,20 +55,10 @@ test('MCP resources/list exposes managed projects from YAML registry', async () 
   const configPath = join(cwd, 'registry.yaml');
 
   try {
-    writeFileSync(configPath, [
-      'version: 1',
-      'projects:',
-      '  - id: meta-orchestrator',
-      '    name: Meta Orchestrator',
-      '    linear:',
-      '      teamKey: MRB',
-      '      projectKey: META',
-      '    repo:',
-      '      path: /tmp/meta-orchestrator',
-      '    symphony:',
-      '      workspacePath: /tmp/workspaces/meta-orchestrator',
-      '      mcpPort: 4100'
-    ].join('\n'));
+    writeFileSync(configPath, managedProjectYaml(managedProject({
+      repoPath: '/tmp/meta-orchestrator',
+      workspaceRoot: '/tmp/workspaces/meta-orchestrator'
+    })));
 
     const runtime = createRuntimeConfig({ env: {}, argv: ['--config', configPath], cwd: process.cwd() });
     const response = await handleMcpMessage({ jsonrpc: '2.0', id: 'resources', method: 'resources/list' }, runtime);
@@ -94,20 +85,10 @@ test('MCP validate_project returns structured invalid setup output', async () =>
   const configPath = join(cwd, 'registry.yaml');
 
   try {
-    writeFileSync(configPath, [
-      'version: 1',
-      'projects:',
-      '  - id: meta-orchestrator',
-      '    name: Meta Orchestrator',
-      '    linear:',
-      '      teamKey: MRB',
-      '      projectKey: META',
-      '    repo:',
-      `      path: ${join(cwd, 'missing-repo')}`,
-      '    symphony:',
-      `      workspacePath: ${join(cwd, 'workspace')}`,
-      '      mcpPort: 4100'
-    ].join('\n'));
+    writeFileSync(configPath, managedProjectYaml(managedProject({
+      repoPath: join(cwd, 'missing-repo'),
+      workspaceRoot: join(cwd, 'workspace')
+    })));
 
     const runtime = createRuntimeConfig({ env: {}, argv: ['--config', configPath], cwd: process.cwd() });
     const response = await handleMcpMessage({
@@ -132,13 +113,7 @@ test('MCP validate_project returns structured invalid setup output', async () =>
 test('MCP registry tools can register, list, and get projects', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'mrb12-mcp-registry-'));
   const configPath = join(cwd, 'registry.yaml');
-  const project = {
-    id: 'meta-orchestrator',
-    name: 'Meta Orchestrator',
-    linear: { teamKey: 'MRB', projectKey: 'META' },
-    repo: { path: join(cwd, 'repo') },
-    symphony: { workspacePath: join(cwd, 'workspace'), mcpPort: 4100 }
-  };
+  const project = managedProject({ repoPath: join(cwd, 'repo'), workspaceRoot: join(cwd, 'workspace') });
 
   try {
     const runtime = createRuntimeConfig({ env: {}, argv: ['--config', configPath], cwd: process.cwd() });
@@ -178,13 +153,7 @@ test('MCP smoke registers project, renders workflow, and validates setup', async
   const repoPath = join(cwd, 'repo');
   const workspacePath = join(cwd, 'workspace');
   const logsPath = join(cwd, 'logs');
-  const project = {
-    id: 'meta-orchestrator',
-    name: 'Meta Orchestrator',
-    linear: { teamKey: 'MRB', projectKey: 'META' },
-    repo: { path: repoPath },
-    symphony: { workspacePath, logsPath, mcpPort: 4100 }
-  };
+  const project = managedProject({ repoPath, workspaceRoot: workspacePath, logsRoot: logsPath });
 
   try {
     mkdirSync(repoPath, { recursive: true });
@@ -206,7 +175,7 @@ test('MCP smoke registers project, renders workflow, and validates setup', async
       params: { name: 'generate_workflow', arguments: { projectId: 'meta-orchestrator' } }
     }, runtime);
     const workflow = (((rendered?.result as Record<string, unknown>).structuredContent as Record<string, unknown>).workflow as Record<string, unknown>);
-    assert.equal(workflow.workflowPath, join(workspacePath, 'WORKFLOW.md'));
+    assert.equal(workflow.workflowPath, join(repoPath, 'WORKFLOW.md'));
 
     const validated = await handleMcpMessage({
       jsonrpc: '2.0',

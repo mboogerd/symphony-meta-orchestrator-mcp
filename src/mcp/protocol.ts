@@ -63,7 +63,7 @@ export async function handleMcpMessage(message: unknown, runtime: RuntimeConfig)
         resources: projects.map((project) => ({
           uri: `symphony://projects/${project.id}`,
           name: project.name,
-          description: `${project.linear.teamKey} managed project at ${project.repo.path}`,
+          description: `${project.tracker.teamKey} managed project at ${project.repo.path}`,
           mimeType: 'application/yaml'
         }))
       });
@@ -361,35 +361,56 @@ function projectSchema() {
     properties: {
       id: stringSchema(),
       name: stringSchema(),
-      linear: {
+      tracker: {
         type: 'object',
         properties: {
+          kind: stringSchema(),
           teamKey: stringSchema(),
+          teamId: stringSchema(),
           projectId: stringSchema(),
-          projectKey: stringSchema()
+          projectSlug: stringSchema()
         },
-        required: ['teamKey']
+        required: ['kind', 'teamKey', 'teamId', 'projectId', 'projectSlug']
       },
       repo: {
         type: 'object',
         properties: {
           path: stringSchema(),
-          remote: stringSchema(),
-          branch: stringSchema()
+          remoteUrl: stringSchema(),
+          defaultBranch: stringSchema(),
+          cloneSource: stringSchema()
         },
-        required: ['path']
+        required: ['path', 'remoteUrl', 'defaultBranch', 'cloneSource']
+      },
+      workflow: {
+        type: 'object',
+        properties: {
+          source: stringSchema(),
+          path: stringSchema(),
+          template: stringSchema()
+        },
+        required: ['source']
       },
       symphony: {
         type: 'object',
         properties: {
-          workspacePath: stringSchema(),
-          logsPath: stringSchema(),
-          mcpPort: { type: 'integer', minimum: 1, maximum: 65535 },
-          runnerPort: { type: 'integer', minimum: 1, maximum: 65535 }
+          command: stringSchema(),
+          runnerPort: { type: 'integer', minimum: 1, maximum: 65535 },
+          workspaceRoot: stringSchema(),
+          logsRoot: stringSchema(),
+          dashboardUrl: stringSchema()
         },
-        required: ['workspacePath', 'mcpPort']
+        required: ['command', 'runnerPort', 'workspaceRoot', 'logsRoot']
+      },
+      codex: {
+        type: 'object',
+        properties: {
+          threadSandbox: stringSchema(),
+          turnSandbox: stringSchema()
+        },
+        required: ['threadSandbox', 'turnSandbox']
       }
     },
-    required: ['id', 'name', 'linear', 'repo', 'symphony']
+    required: ['id', 'name', 'tracker', 'repo', 'workflow', 'symphony', 'codex']
   };
 }

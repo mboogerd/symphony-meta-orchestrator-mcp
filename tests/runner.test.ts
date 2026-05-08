@@ -4,7 +4,8 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { createRunnerManager, type ManagedProject } from '../src/index.ts';
+import { createRunnerManager } from '../src/index.ts';
+import { managedProject, managedProjectYaml } from './project-fixtures.ts';
 
 test('runner manager starts, reports, prevents duplicate starts, stops, and restarts one project process', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'mrb10-runner-'));
@@ -14,7 +15,7 @@ test('runner manager starts, reports, prevents duplicate starts, stops, and rest
 
   try {
     spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
-    const project = managedProject({ repoPath, workspacePath, logsPath });
+    const project = managedProject({ repoPath, workspaceRoot: workspacePath, logsRoot: logsPath });
     const manager = createRunnerManager({
       command: process.execPath,
       commandArgs: ['-e', 'setInterval(() => {}, 1000)']
@@ -25,7 +26,7 @@ test('runner manager starts, reports, prevents duplicate starts, stops, and rest
     assert.equal(started.status.state, 'running');
     assert.equal(started.status.port, 4310);
     assert.equal(started.status.dashboardUrl, 'http://localhost:4310');
-    assert.equal(started.status.workflowPath, join(workspacePath, 'WORKFLOW.md'));
+    assert.equal(started.status.workflowPath, join(repoPath, 'WORKFLOW.md'));
     assert.equal(started.status.logPath, join(logsPath, 'meta-orchestrator.runner.log'));
     assert.equal(existsSync(started.status.statePath), true);
     assert.equal(existsSync(started.status.workflowPath), true);
@@ -61,8 +62,8 @@ test('runner status returns idle details before a project has been started', asy
   try {
     const project = managedProject({
       repoPath: join(cwd, 'repo'),
-      workspacePath: join(cwd, 'workspace'),
-      logsPath: join(cwd, 'logs')
+      workspaceRoot: join(cwd, 'workspace'),
+      logsRoot: join(cwd, 'logs')
     });
     const manager = createRunnerManager({ command: process.execPath, commandArgs: ['-e', 'setInterval(() => {}, 1000)'] });
 
@@ -84,8 +85,8 @@ test('runner manager tails bounded log lines', async () => {
   try {
     const project = managedProject({
       repoPath: join(cwd, 'repo'),
-      workspacePath: join(cwd, 'workspace'),
-      logsPath
+      workspaceRoot: join(cwd, 'workspace'),
+      logsRoot: logsPath
     });
     const manager = createRunnerManager({ command: process.execPath, commandArgs: ['-e', 'setInterval(() => {}, 1000)'] });
     mkdirSync(logsPath, { recursive: true });
@@ -110,7 +111,7 @@ test('runner command parsing preserves quoted arguments and rejects shell operat
 
   try {
     spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
-    const project = managedProject({ repoPath, workspacePath, logsPath });
+    const project = managedProject({ repoPath, workspaceRoot: workspacePath, logsRoot: logsPath });
     const manager = createRunnerManager({
       command: `${process.execPath} -e "setInterval(() => {}, 1000)"`,
       spawnProcess: ((command, args) => {
@@ -126,8 +127,8 @@ test('runner command parsing preserves quoted arguments and rejects shell operat
     assert.equal(calls[0]?.command, process.execPath);
     assert.deepEqual(calls[0]?.args.slice(0, 2), ['-e', 'setInterval(() => {}, 1000)']);
 
-    assert.throws(
-      () => createRunnerManager({ command: `${process.execPath} -e "ok" && echo nope` }),
+    await assert.rejects(
+      createRunnerManager({ command: `${process.execPath} -e "ok" && echo nope` }).start(project),
       /shell operators and globs are not supported/
     );
   } finally {
@@ -140,22 +141,11 @@ test('CLI runners:status reports runner lifecycle fields from the registry', () 
   const configPath = join(cwd, 'registry.yaml');
 
   try {
-    writeFileSync(configPath, [
-      'version: 1',
-      'projects:',
-      '  - id: meta-orchestrator',
-      '    name: Meta Orchestrator',
-      '    linear:',
-      '      teamKey: MRB',
-      '      projectKey: META',
-      '    repo:',
-      `      path: ${join(cwd, 'repo')}`,
-      '    symphony:',
-      `      workspacePath: ${join(cwd, 'workspace')}`,
-      `      logsPath: ${join(cwd, 'logs')}`,
-      '      mcpPort: 4100',
-      '      runnerPort: 4310'
-    ].join('\n'));
+    writeFileSync(configPath, managedProjectYaml(managedProject({
+      repoPath: join(cwd, 'repo'),
+      workspaceRoot: join(cwd, 'workspace'),
+      logsRoot: join(cwd, 'logs')
+    })));
 
     const result = spawnSync(process.execPath, ['src/cli/index.ts', 'runners:status', '--config', configPath], {
       cwd: process.cwd(),
@@ -172,23 +162,3 @@ test('CLI runners:status reports runner lifecycle fields from the registry', () 
     rmSync(cwd, { recursive: true, force: true });
   }
 });
-
-function managedProject(paths: { repoPath: string; workspacePath: string; logsPath: string }): ManagedProject {
-  return {
-    id: 'meta-orchestrator',
-    name: 'Meta Orchestrator',
-    linear: {
-      teamKey: 'MRB',
-      projectKey: 'META'
-    },
-    repo: {
-      path: paths.repoPath
-    },
-    symphony: {
-      workspacePath: paths.workspacePath,
-      logsPath: paths.logsPath,
-      mcpPort: 4100,
-      runnerPort: 4310
-    }
-  };
-}
