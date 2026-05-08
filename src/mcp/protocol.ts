@@ -517,7 +517,27 @@ function projectSchema() {
         type: 'object',
         properties: {
           threadSandbox: stringSchema(),
-          turnSandbox: stringSchema()
+          turnSandbox: {
+            oneOf: [
+              stringSchema(),
+              {
+                type: 'object',
+                properties: {
+                  type: stringSchema(),
+                  networkAccess: {
+                    oneOf: [
+                      { type: 'boolean' },
+                      stringSchema()
+                    ]
+                  },
+                  writableRoots: { type: 'array', items: stringSchema() },
+                  excludeSlashTmp: { type: 'boolean' },
+                  excludeTmpdirEnvVar: { type: 'boolean' }
+                },
+                required: ['type']
+              }
+            ]
+          }
         },
         required: ['threadSandbox', 'turnSandbox']
       }

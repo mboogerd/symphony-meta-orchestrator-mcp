@@ -407,8 +407,19 @@ function validateRenderedWorkflow(content: string, subsystem: { errors: Workflow
 
 function validateCodexPolicy(project: ManagedProject, workflowContent: string, subsystem: { errors: WorkflowSetupIssue[]; warnings: WorkflowSetupIssue[] }): void {
   const expectsGit = /\b(git|GitHub|github|clone|fetch|push|pull|PR)\b/.test(workflowContent);
-  if (expectsGit && project.codex.turnSandbox === 'read-only') {
-    addIssue(subsystem, { code: 'codex_turn_sandbox_missing', field: 'codex.turnSandbox', message: 'Workflow expects git/GitHub operations but turn sandbox is read-only' });
+  const turnSandbox = project.codex.turnSandbox;
+  const hasFilesystemWrite = turnSandbox.type === 'workspaceWrite' || turnSandbox.type === 'dangerFullAccess';
+  const hasNetworkAccess = turnSandbox.type === 'dangerFullAccess'
+    || (turnSandbox.type === 'workspaceWrite' && turnSandbox.networkAccess === true)
+    || (turnSandbox.type === 'readOnly' && turnSandbox.networkAccess === true)
+    || (turnSandbox.type === 'externalSandbox' && turnSandbox.networkAccess === 'enabled');
+
+  if (expectsGit && !hasFilesystemWrite) {
+    addIssue(subsystem, { code: 'codex_turn_sandbox_missing', field: 'codex.turnSandbox', message: 'Workflow expects git/GitHub operations but turn sandbox does not grant workspace write access' });
+  }
+
+  if (expectsGit && !hasNetworkAccess) {
+    addIssue(subsystem, { code: 'codex_turn_sandbox_missing', field: 'codex.turnSandbox.networkAccess', message: 'Workflow expects git/GitHub operations but turn sandbox does not grant network access' });
   }
 }
 

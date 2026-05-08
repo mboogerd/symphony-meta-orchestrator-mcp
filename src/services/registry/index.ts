@@ -43,11 +43,17 @@ export type WorkflowConfig =
       template: string;
     };
 
-export type CodexSandboxPolicy = 'read-only' | 'workspace-write' | 'danger-full-access';
+export type CodexThreadSandboxPolicy = 'read-only' | 'workspace-write' | 'danger-full-access';
+export type CodexTurnSandboxPolicy =
+  | { type: 'readOnly'; networkAccess?: boolean }
+  | { type: 'workspaceWrite'; networkAccess?: boolean; writableRoots?: string[]; excludeSlashTmp?: boolean; excludeTmpdirEnvVar?: boolean }
+  | { type: 'dangerFullAccess' }
+  | { type: 'externalSandbox'; networkAccess?: 'restricted' | 'enabled' };
+export type LegacyCodexSandboxPolicy = 'read-only' | 'workspace-write' | 'danger-full-access';
 
 export type CodexPolicyConfig = {
-  threadSandbox: CodexSandboxPolicy;
-  turnSandbox: CodexSandboxPolicy;
+  threadSandbox: CodexThreadSandboxPolicy;
+  turnSandbox: CodexTurnSandboxPolicy;
 };
 
 export type SymphonyProjectConfig = {
@@ -90,7 +96,28 @@ export class ProjectRegistryValidationError extends Error {
 
 const nonEmptyString = z.string().trim().min(1, 'expected a non-empty string');
 const port = z.number().int().min(1).max(65535);
-const sandboxPolicy = z.enum(['read-only', 'workspace-write', 'danger-full-access']);
+const legacySandboxPolicy = z.enum(['read-only', 'workspace-write', 'danger-full-access']);
+const threadSandboxPolicy = legacySandboxPolicy;
+const turnSandboxPolicy = z.preprocess(normalizeCodexTurnSandboxPolicy, z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('readOnly'),
+    networkAccess: z.boolean().optional()
+  }).strict(),
+  z.object({
+    type: z.literal('workspaceWrite'),
+    networkAccess: z.boolean().optional(),
+    writableRoots: z.array(nonEmptyString).optional(),
+    excludeSlashTmp: z.boolean().optional(),
+    excludeTmpdirEnvVar: z.boolean().optional()
+  }).strict(),
+  z.object({
+    type: z.literal('dangerFullAccess')
+  }).strict(),
+  z.object({
+    type: z.literal('externalSandbox'),
+    networkAccess: z.enum(['restricted', 'enabled']).optional()
+  }).strict()
+]));
 
 export const managedProjectSchema = z.object({
   id: nonEmptyString,
@@ -128,8 +155,8 @@ export const managedProjectSchema = z.object({
     dashboardUrl: nonEmptyString.optional()
   }).strict(),
   codex: z.object({
-    threadSandbox: sandboxPolicy,
-    turnSandbox: sandboxPolicy
+    threadSandbox: threadSandboxPolicy,
+    turnSandbox: turnSandboxPolicy
   }).strict()
 }).strict();
 
@@ -257,8 +284,38 @@ function normalizeRegistry(value: unknown): ManagedProjectRegistry {
 
   return {
     version: value.version,
-    projects: value.projects
+    projects: Array.isArray(value.projects) ? value.projects.map(normalizeProject) : value.projects
   } as ManagedProjectRegistry;
+}
+
+function normalizeProject(value: unknown): unknown {
+  if (!isRecord(value) || !isRecord(value.codex)) {
+    return value;
+  }
+
+  return {
+    ...value,
+    codex: {
+      ...value.codex,
+      turnSandbox: normalizeCodexTurnSandboxPolicy(value.codex.turnSandbox)
+    }
+  };
+}
+
+export function normalizeCodexTurnSandboxPolicy(value: unknown): unknown {
+  if (value === 'read-only') {
+    return { type: 'readOnly' };
+  }
+
+  if (value === 'workspace-write') {
+    return { type: 'workspaceWrite' };
+  }
+
+  if (value === 'danger-full-access') {
+    return { type: 'dangerFullAccess' };
+  }
+
+  return value;
 }
 
 function validateProjects(projects: unknown[], issues: string[]): void {
