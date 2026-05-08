@@ -97,7 +97,7 @@ export function createRunnerManager(options: RunnerManagerOptions = {}): RunnerM
         };
       }
 
-      const validation = await validateProjectWorkflowSetup(project);
+      const validation = await validateProjectWorkflowSetup(project, { phase: 'live' });
       if (!validation.ok) {
         return {
           started: false,

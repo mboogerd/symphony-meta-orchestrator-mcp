@@ -3,7 +3,7 @@ import { packageInfo } from '../package-info.ts';
 import { createLinearService, LinearServiceError, type LinearService } from '../services/linear/index.ts';
 import { createProjectRegistryService, ProjectRegistryValidationError, type ManagedProject } from '../services/registry/index.ts';
 import { createRunnerManager, type RunnerManager } from '../services/runner/index.ts';
-import { validateProjectWorkflowSetups, WorkflowSetupValidationError, writeProjectWorkflow, type PortAvailabilityProbe } from '../services/workflow/index.ts';
+import { validateProjectWorkflowSetups, WorkflowSetupValidationError, writeProjectWorkflow, type PortAvailabilityProbe, type WorkflowSetupValidationPhase } from '../services/workflow/index.ts';
 
 // Compatibility JSON-RPC harness retained for direct unit tests and parity checks.
 // The production stdio entrypoint uses the official MCP SDK server in server.ts.
@@ -88,7 +88,12 @@ export async function handleMcpMessage(message: unknown, runtime: McpRuntimeConf
           tool('list_projects', 'List managed projects from the local registry.', {}),
           tool('get_project', 'Get one managed project from the local registry.', { projectId: stringSchema() }, ['projectId']),
           tool('register_project', 'Register a managed project in the local registry.', { project: projectSchema() }, ['project']),
-          tool('validate_project', 'Validate one project or all registry projects and workflow setup.', { projectId: stringSchema() }),
+          tool('validate_project', 'Validate one project or all registry projects and workflow setup.', {
+            projectId: stringSchema(),
+            phase: { type: 'string', enum: ['schema', 'render', 'workspace', 'live'], default: 'workspace' },
+            live: { type: 'boolean', default: false },
+            validateLinear: { type: 'boolean', default: false }
+          }),
           tool('generate_workflow', 'Generate WORKFLOW.md for a managed project.', { projectId: stringSchema() }, ['projectId']),
           tool('create_linear_project', 'Create a Linear project.', {
             name: stringSchema(),
@@ -199,6 +204,7 @@ async function handleToolCall(message: JsonRpcRequest, runtime: McpRuntimeConfig
       }
       const setup = await validateProjectWorkflowSetups(projects, {
         registry: loadedRegistry,
+        phase: readValidationPhase(argumentsValue),
         validateLinear: argumentsValue.validateLinear === true,
         env: runtime.env,
         portAvailable: runtime.mcpServices?.portAvailable
@@ -289,6 +295,15 @@ async function handleToolCall(message: JsonRpcRequest, runtime: McpRuntimeConfig
   } catch (error) {
     return toolError(message.id ?? null, errorCode(error), error instanceof Error ? error.message : String(error), errorDetails(error));
   }
+}
+
+function readValidationPhase(args: Record<string, unknown>): WorkflowSetupValidationPhase {
+  if (args.live === true) {
+    return 'live';
+  }
+  return args.phase === 'schema' || args.phase === 'render' || args.phase === 'workspace' || args.phase === 'live'
+    ? args.phase
+    : 'workspace';
 }
 
 async function selectedProjects(runtime: RuntimeConfig, projectId: unknown) {

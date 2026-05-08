@@ -26,6 +26,7 @@ npm test
 npm run cli -- health
 npm run cli -- projects list --config symphony.registry.yaml
 npm run cli -- project validate --config symphony.registry.yaml
+npm run cli -- project validate --config symphony.registry.yaml --live
 npm run cli -- workflow render --config symphony.registry.yaml --project meta-orchestrator
 npm run cli -- runner status --config symphony.registry.yaml --project meta-orchestrator
 npm run mcp
@@ -88,13 +89,24 @@ has `ok`, `errors`, and `warnings`, so operators can see whether the failure is
 schema, clone, workflow rendering, Linear auth, runner launch readiness,
 directory access, or Codex sandbox policy related.
 
+Validation is phased. CLI `project validate` and MCP `validate_project` default
+to the `workspace` phase, which checks registry/schema data, workflow
+renderability, repository metadata, writable workspace/log roots, and Codex
+policy without probing the live runner command or TCP port. Use CLI `--live`,
+MCP `live: true`, or MCP `phase: "live"` when you need full runner readiness.
+Workflow rendering also uses non-live validation, so an occupied runner port does
+not block writing `WORKFLOW.md`; `runner start` always performs live checks.
+Each project result includes `phase` and `phases` fields to show which phase was
+requested and where errors or warnings were recorded.
+
 Warnings call out degraded readiness that may still be acceptable locally, such
 as a missing local default branch or absent git origin remote. Errors block real
-runner readiness, such as a missing repo path, invalid repo-owned workflow,
-unavailable runner port, missing runner command, missing writable roots, or a
-Codex turn sandbox that lacks filesystem or network access for workflows that
-expect git/GitHub operations.
-Set `SYMPHONY_VALIDATE_LINEAR=1` for CLI validation, or pass
+runner readiness during the relevant phase, such as a missing repo path, invalid
+repo-owned workflow, missing writable roots, or a Codex turn sandbox that lacks
+filesystem or network access for workflows that expect git/GitHub operations.
+Live validation additionally checks for an unavailable runner port, missing
+runner command, or non-executable runner command path. Set
+`SYMPHONY_VALIDATE_LINEAR=1` for CLI validation, or pass
 `validateLinear: true` to MCP `validate_project`, to require `LINEAR_API_KEY`
 and validate Linear-specific registry fields.
 
@@ -227,6 +239,7 @@ that points at this repository plus a disposable workspace/logs directory.
    ```sh
    npm run cli -- workflow render --config symphony.registry.yaml --project meta-orchestrator
    npm run cli -- project validate --config symphony.registry.yaml --project meta-orchestrator
+   npm run cli -- project validate --config symphony.registry.yaml --project meta-orchestrator --live
    ```
 
 4. Exercise the local runner lifecycle:

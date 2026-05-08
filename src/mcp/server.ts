@@ -14,6 +14,7 @@ import { createRunnerManager, type RunnerManager } from '../services/runner/inde
 import {
   type PortAvailabilityProbe,
   validateProjectWorkflowSetups,
+  type WorkflowSetupValidationPhase,
   WorkflowSetupValidationError,
   writeProjectWorkflow
 } from '../services/workflow/index.ts';
@@ -98,8 +99,13 @@ function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void
 
   server.registerTool('validate_project', {
     description: 'Validate one project or all registry projects and workflow setup.',
-    inputSchema: { projectId: optionalString, validateLinear: z.boolean().optional() }
-  }, async ({ projectId, validateLinear }) => {
+    inputSchema: {
+      projectId: optionalString,
+      phase: z.enum(['schema', 'render', 'workspace', 'live']).optional(),
+      live: z.boolean().optional(),
+      validateLinear: z.boolean().optional()
+    }
+  }, async ({ projectId, phase, live, validateLinear }) => {
     const loadedRegistry = await registry(runtime).load();
     const projects = projectId === undefined ? loadedRegistry.projects : loadedRegistry.projects.filter((candidate) => candidate.id === projectId);
     if (projects.length === 0) {
@@ -107,6 +113,7 @@ function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void
     }
     const setup = await validateProjectWorkflowSetups(projects, {
       registry: loadedRegistry,
+      phase: live ? 'live' : readValidationPhase(phase),
       validateLinear,
       env: runtime.env,
       portAvailable: runtime.mcpServices?.portAvailable
@@ -212,6 +219,10 @@ function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void
     const project = await requireProject(runtime, projectId);
     return toolResult({ runner: await runnerManager(runtime).tailLogs(project, lineCount) });
   }));
+}
+
+function readValidationPhase(phase: string | undefined): WorkflowSetupValidationPhase {
+  return phase === 'schema' || phase === 'render' || phase === 'workspace' || phase === 'live' ? phase : 'workspace';
 }
 
 async function withToolErrors(callback: () => Promise<ReturnType<typeof toolResult>>) {
