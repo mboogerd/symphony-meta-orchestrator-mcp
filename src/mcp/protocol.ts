@@ -479,6 +479,8 @@ function projectSchema() {
         type: 'object',
         properties: {
           command: stringSchema(),
+          args: { type: 'array', items: stringSchema() },
+          cwd: stringSchema(),
           runnerPort: { type: 'integer', minimum: 1, maximum: 65535 },
           workspaceRoot: stringSchema(),
           logsRoot: stringSchema(),

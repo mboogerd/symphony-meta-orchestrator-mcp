@@ -52,6 +52,8 @@ export type CodexPolicyConfig = {
 
 export type SymphonyProjectConfig = {
   command: string;
+  args?: string[];
+  cwd?: string;
   runnerPort: number;
   workspaceRoot: string;
   logsRoot: string;
@@ -118,6 +120,8 @@ export const managedProjectSchema = z.object({
   ]),
   symphony: z.object({
     command: nonEmptyString,
+    args: z.array(z.string()).optional(),
+    cwd: nonEmptyString.optional(),
     runnerPort: port,
     workspaceRoot: nonEmptyString,
     logsRoot: nonEmptyString,
@@ -347,6 +351,8 @@ function validateSymphony(
   }
 
   readRequiredString(value.command, `${prefix}.symphony.command`, issues);
+  validateOptionalStringArray(value.args, `${prefix}.symphony.args`, issues);
+  readOptionalString(value.cwd, `${prefix}.symphony.cwd`, issues);
   const workspacePath = readRequiredString(value.workspaceRoot, `${prefix}.symphony.workspaceRoot`, issues);
   readRequiredString(value.logsRoot, `${prefix}.symphony.logsRoot`, issues);
   const runnerPort = readRequiredPort(value.runnerPort, `${prefix}.symphony.runnerPort`, issues);
@@ -416,6 +422,23 @@ function readOptionalPort(value: unknown, path: string, issues: string[]): numbe
   }
 
   return readRequiredPort(value, path, issues);
+}
+
+function validateOptionalStringArray(value: unknown, path: string, issues: string[]): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (!Array.isArray(value)) {
+    issues.push(`${path}: expected an array of strings when provided`);
+    return;
+  }
+
+  value.forEach((entry, index) => {
+    if (typeof entry !== 'string') {
+      issues.push(`${path}[${index}]: expected a string`);
+    }
+  });
 }
 
 function addStringCollision(

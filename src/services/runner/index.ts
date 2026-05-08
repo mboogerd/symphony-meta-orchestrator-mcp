@@ -2,7 +2,6 @@ import { openSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
-import { parse as parseShellCommand } from 'shell-quote';
 import type { ManagedProject } from '../registry/index.ts';
 import { validateProjectWorkflowSetup, writeProjectWorkflow, type WorkflowRenderResult } from '../workflow/index.ts';
 
@@ -20,6 +19,9 @@ export type RunnerStatus = {
   state: RunnerProcessState;
   pid?: number;
   port?: number;
+  command?: string;
+  args?: string[];
+  cwd?: string;
   workflowPath: string;
   dashboardUrl?: string;
   logPath: string;
@@ -36,6 +38,7 @@ export type RunnerStartResult = {
 export type RunnerManagerOptions = {
   command?: string;
   commandArgs?: string[];
+  cwd?: string;
   now?: () => Date;
   spawnProcess?: typeof spawn;
 };
@@ -44,6 +47,9 @@ type RunnerStateFile = {
   projectId: string;
   pid: number;
   port?: number;
+  command?: string;
+  args?: string[];
+  cwd?: string;
   workflowPath: string;
   dashboardUrl?: string;
   logPath: string;
@@ -68,13 +74,12 @@ export type RunnerLogTail = {
   truncated: boolean;
 };
 
-const DEFAULT_RUNNER_COMMAND = 'npx --yes symphony';
 const STOP_TIMEOUT_MS = 5_000;
 
 export function createRunnerManager(options: RunnerManagerOptions = {}): RunnerManager {
   const now = options.now ?? (() => new Date());
   const spawnProcess = options.spawnProcess ?? spawn;
-  const defaultCommand = options.command ?? process.env.SYMPHONY_RUNNER_COMMAND;
+  const commandOverride = options.command ?? process.env.SYMPHONY_RUNNER_COMMAND;
 
   return {
     async start(project: ManagedProject): Promise<RunnerStartResult> {
@@ -113,11 +118,15 @@ export function createRunnerManager(options: RunnerManagerOptions = {}): RunnerM
       }
 
       const workflow = await writeProjectWorkflow(project);
-      const child = spawnRunner(spawnProcess, defaultCommand, options.commandArgs, project, workflow, paths.logPath);
+      const runnerCommand = resolveRunnerCommand(commandOverride, options.commandArgs, options.cwd, project, workflow);
+      const child = spawnRunner(spawnProcess, runnerCommand, project, workflow, paths.logPath);
       const state: RunnerStateFile = {
         projectId: project.id,
         pid: requirePid(child),
         port: project.symphony.runnerPort,
+        command: runnerCommand.file,
+        args: runnerCommand.args,
+        cwd: runnerCommand.cwd,
         workflowPath: workflow.workflowPath,
         dashboardUrl: projectDashboardUrl(project),
         logPath: paths.logPath,
@@ -234,6 +243,9 @@ export function createIdleRunnerStatus(
     id: projectOrId.id,
     state: 'idle',
     port: projectOrId.symphony.runnerPort,
+    command: projectOrId.symphony.command,
+    args: projectOrId.symphony.args,
+    cwd: runnerCwd(projectOrId, resolvedPaths.workspaceRoot),
     workflowPath: resolvedPaths.workflowPath,
     dashboardUrl: projectDashboardUrl(projectOrId),
     logPath: resolvedPaths.logPath,
@@ -256,22 +268,13 @@ function runnerPaths(project: ManagedProject) {
 
 function spawnRunner(
   spawnProcess: typeof spawn,
-  command: string | undefined,
-  commandArgs: string[] | undefined,
+  command: ResolvedRunnerCommand,
   project: ManagedProject,
   workflow: WorkflowRenderResult,
   logPath: string
 ): ChildProcess {
-  const parsedCommand = parseCommand(command ?? project.symphony.command, commandArgs);
-  const args = [
-    '--workflow',
-    workflow.workflowPath,
-    '--port',
-    String(project.symphony.runnerPort)
-  ];
-
-  const child = spawnProcess(parsedCommand.file, [...parsedCommand.args, ...args], {
-    cwd: workflow.workspaceRoot,
+  const child = spawnProcess(command.file, command.args, {
+    cwd: command.cwd,
     detached: true,
     stdio: ['ignore', openLogFd(logPath), openLogFd(logPath)],
     env: {
@@ -289,24 +292,40 @@ function openLogFd(logPath: string): number {
   return openSync(logPath, 'a');
 }
 
-function parseCommand(command: string, args: string[] | undefined): { file: string; args: string[] } {
-  if (args !== undefined) {
-    return { file: command, args };
-  }
+type ResolvedRunnerCommand = {
+  file: string;
+  args: string[];
+  cwd: string;
+};
 
-  const parsed = parseShellCommand(command, process.env);
-  const unsupported = parsed.find((part) => typeof part !== 'string');
-
-  if (unsupported !== undefined) {
-    throw new Error('Runner command must be a single executable plus arguments; shell operators and globs are not supported');
-  }
-
-  const [file, ...commandArgs] = parsed as string[];
-  if (file === undefined) {
+function resolveRunnerCommand(
+  commandOverride: string | undefined,
+  argsOverride: string[] | undefined,
+  cwdOverride: string | undefined,
+  project: ManagedProject,
+  workflow: WorkflowRenderResult
+): ResolvedRunnerCommand {
+  const file = commandOverride ?? project.symphony.command;
+  if (file.trim().length === 0) {
     throw new Error('Runner command cannot be empty');
   }
 
-  return { file, args: commandArgs };
+  return {
+    file,
+    args: [
+      ...(argsOverride ?? project.symphony.args ?? []),
+      '--port',
+      String(project.symphony.runnerPort),
+      '--logs-root',
+      resolve(project.symphony.logsRoot),
+      workflow.workflowPath
+    ],
+    cwd: cwdOverride ?? runnerCwd(project, workflow.workspaceRoot)
+  };
+}
+
+function runnerCwd(project: ManagedProject, fallbackWorkspaceRoot: string): string {
+  return resolve(project.symphony.cwd ?? fallbackWorkspaceRoot);
 }
 
 function requirePid(child: ChildProcess): number {
@@ -372,6 +391,9 @@ function statusFromState(
     state: processState,
     pid: state.pid,
     port: state.port ?? project.symphony.runnerPort,
+    command: state.command ?? project.symphony.command,
+    args: state.args ?? project.symphony.args,
+    cwd: state.cwd ?? runnerCwd(project, paths.workspaceRoot),
     workflowPath: state.workflowPath || paths.workflowPath,
     dashboardUrl: state.dashboardUrl ?? projectDashboardUrl(project),
     logPath: state.logPath || paths.logPath,
@@ -407,6 +429,9 @@ function isRunnerStateFile(value: unknown): value is RunnerStateFile {
     && typeof value === 'object'
     && typeof (value as RunnerStateFile).projectId === 'string'
     && typeof (value as RunnerStateFile).pid === 'number'
+    && ((value as RunnerStateFile).command === undefined || typeof (value as RunnerStateFile).command === 'string')
+    && ((value as RunnerStateFile).args === undefined || Array.isArray((value as RunnerStateFile).args))
+    && ((value as RunnerStateFile).cwd === undefined || typeof (value as RunnerStateFile).cwd === 'string')
     && typeof (value as RunnerStateFile).workflowPath === 'string'
     && typeof (value as RunnerStateFile).logPath === 'string';
 }

@@ -37,13 +37,13 @@ Required local environment:
 SYMPHONY_CONFIG_PATH=./symphony.registry.yaml
 SYMPHONY_LOG_LEVEL=info
 LINEAR_API_KEY=<linear-api-key>
-SYMPHONY_RUNNER_COMMAND="npx --yes symphony"
+SYMPHONY_RUNNER_COMMAND="node"
 ```
 
 `LINEAR_API_KEY` is required for Linear project and issue creation. Registry,
 workflow, and runner status commands can run without it. Override
 `SYMPHONY_RUNNER_COMMAND` during local tests when you want the runner manager to
-launch a known local command instead of the default Symphony package.
+launch a known local command instead of the registry command.
 
 Managed projects are stored as YAML runtime files:
 
@@ -67,7 +67,13 @@ projects:
       source: repo
       path: WORKFLOW.md
     symphony:
-      command: npx --yes symphony
+      command: mise
+      args:
+        - exec
+        - --
+        - ./bin/symphony
+        - --i-understand-that-this-will-be-running-without-the-usual-guardrails
+      cwd: /path/to/symphony-installation
       runnerPort: 4101
       workspaceRoot: /path/to/workspace
       logsRoot: /path/to/logs
