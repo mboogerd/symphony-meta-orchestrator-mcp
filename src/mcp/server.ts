@@ -3,14 +3,16 @@ import { ListResourcesRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { RuntimeConfig } from '../config/runtime.ts';
 import { packageInfo } from '../package-info.ts';
-import { createLinearService, LinearServiceError } from '../services/linear/index.ts';
+import { createLinearService, LinearServiceError, type LinearService } from '../services/linear/index.ts';
 import {
   createProjectRegistryService,
   managedProjectSchema,
+  type ManagedProject,
   ProjectRegistryValidationError
 } from '../services/registry/index.ts';
-import { createRunnerManager } from '../services/runner/index.ts';
+import { createRunnerManager, type RunnerManager } from '../services/runner/index.ts';
 import {
+  type PortAvailabilityProbe,
   validateProjectWorkflowSetups,
   WorkflowSetupValidationError,
   writeProjectWorkflow
@@ -40,7 +42,17 @@ const projectIssueSchema = {
   labelIds: z.array(requiredString).optional()
 };
 
-export function createMcpServer(runtime: RuntimeConfig): McpServer {
+export type McpServerServices = {
+  createLinearService?: (runtime: McpServerRuntimeConfig) => LinearService;
+  createRunnerManager?: (runtime: McpServerRuntimeConfig) => RunnerManager;
+  portAvailable?: PortAvailabilityProbe;
+};
+
+export type McpServerRuntimeConfig = RuntimeConfig & {
+  mcpServices?: McpServerServices;
+};
+
+export function createMcpServer(runtime: McpServerRuntimeConfig): McpServer {
   const server = new McpServer({
     name: packageInfo.name,
     version: packageInfo.version
@@ -69,20 +81,20 @@ export function createMcpServer(runtime: RuntimeConfig): McpServer {
   return server;
 }
 
-function registerTools(server: McpServer, runtime: RuntimeConfig): void {
+function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void {
   server.registerTool('list_projects', {
     description: 'List managed projects from the local registry.'
-  }, async () => toolResult({ projects: await registry(runtime).list() }));
+  }, async () => withToolErrors(async () => toolResult({ projects: await registry(runtime).list() })));
 
   server.registerTool('get_project', {
     description: 'Get one managed project from the local registry.',
     inputSchema: { projectId: requiredString }
-  }, async ({ projectId }) => toolResult({ project: await requireProject(runtime, projectId) }));
+  }, async ({ projectId }) => withToolErrors(async () => toolResult({ project: await requireProject(runtime, projectId) })));
 
   server.registerTool('register_project', {
     description: 'Register a managed project in the local registry.',
     inputSchema: { project: managedProjectSchema }
-  }, async ({ project }) => toolResult({ project: await registry(runtime).create(project) }));
+  }, async ({ project }) => withToolErrors(async () => toolResult({ project: await registry(runtime).create(project) })));
 
   server.registerTool('validate_project', {
     description: 'Validate one project or all registry projects and workflow setup.',
@@ -93,14 +105,19 @@ function registerTools(server: McpServer, runtime: RuntimeConfig): void {
     if (projects.length === 0) {
       return toolError('project_not_found', 'Project was not found', { projectId });
     }
-    const setup = await validateProjectWorkflowSetups(projects, { registry: loadedRegistry, validateLinear, env: runtime.env });
+    const setup = await validateProjectWorkflowSetups(projects, {
+      registry: loadedRegistry,
+      validateLinear,
+      env: runtime.env,
+      portAvailable: runtime.mcpServices?.portAvailable
+    });
     return toolResult({ setup }, setup.some((validation) => !validation.ok));
   });
 
   server.registerTool('generate_workflow', {
     description: 'Generate WORKFLOW.md for a managed project.',
     inputSchema: { projectId: requiredString }
-  }, async ({ projectId }) => toolResult({ workflow: await writeProjectWorkflow(await requireProject(runtime, projectId)) }));
+  }, async ({ projectId }) => withToolErrors(async () => toolResult({ workflow: await writeProjectWorkflow(await requireProject(runtime, projectId)) })));
 
   server.registerTool('create_linear_project', {
     description: 'Create a Linear project.',
@@ -171,9 +188,9 @@ function registerTools(server: McpServer, runtime: RuntimeConfig): void {
     server.registerTool(name, {
       description: `${name.replaceAll('_', ' ')} for a managed project.`,
       inputSchema: { projectId: requiredString }
-    }, async ({ projectId }) => {
+    }, async ({ projectId }) => withToolErrors(async () => {
       const project = await requireProject(runtime, projectId);
-      const manager = createRunnerManager();
+      const manager = runnerManager(runtime);
       const runner = name === 'start_runner'
         ? await manager.start(project)
         : name === 'stop_runner'
@@ -182,7 +199,7 @@ function registerTools(server: McpServer, runtime: RuntimeConfig): void {
             ? await manager.restart(project)
             : await manager.status(project);
       return toolResult({ runner });
-    });
+    }));
   }
 
   server.registerTool('tail_runner_logs', {
@@ -191,10 +208,10 @@ function registerTools(server: McpServer, runtime: RuntimeConfig): void {
       projectId: requiredString,
       lineCount: z.number().int().min(1).max(1000).optional()
     }
-  }, async ({ projectId, lineCount }) => {
+  }, async ({ projectId, lineCount }) => withToolErrors(async () => {
     const project = await requireProject(runtime, projectId);
-    return toolResult({ runner: await createRunnerManager().tailLogs(project, lineCount) });
-  });
+    return toolResult({ runner: await runnerManager(runtime).tailLogs(project, lineCount) });
+  }));
 }
 
 async function withToolErrors(callback: () => Promise<ReturnType<typeof toolResult>>) {
@@ -232,20 +249,24 @@ async function selectedProjects(runtime: RuntimeConfig, projectId: string | unde
   return projectId === undefined ? projects : projects.filter((project) => project.id === projectId);
 }
 
-async function requireProject(runtime: RuntimeConfig, projectId: string) {
+async function requireProject(runtime: RuntimeConfig, projectId: string): Promise<ManagedProject> {
   const [project] = await selectedProjects(runtime, projectId);
   if (project === undefined) {
-    throw new Error(`Project was not found: ${projectId}`);
+    throw new McpToolError('project_not_found', 'Project was not found', { projectId });
   }
   return project;
 }
 
-function linear(runtime: RuntimeConfig) {
-  return createLinearService({ apiKey: runtime.env.LINEAR_API_KEY });
+function linear(runtime: McpServerRuntimeConfig) {
+  return runtime.mcpServices?.createLinearService?.(runtime) ?? createLinearService({ apiKey: runtime.env.LINEAR_API_KEY });
+}
+
+function runnerManager(runtime: McpServerRuntimeConfig) {
+  return runtime.mcpServices?.createRunnerManager?.(runtime) ?? createRunnerManager();
 }
 
 function errorCode(error: unknown): string {
-  if (error instanceof LinearServiceError) {
+  if (error instanceof McpToolError || error instanceof LinearServiceError) {
     return error.code;
   }
   if (error instanceof ProjectRegistryValidationError) {
@@ -258,7 +279,7 @@ function errorCode(error: unknown): string {
 }
 
 function errorDetails(error: unknown): Record<string, unknown> {
-  if (error instanceof LinearServiceError) {
+  if (error instanceof McpToolError || error instanceof LinearServiceError) {
     return error.details;
   }
   if (error instanceof ProjectRegistryValidationError) {
@@ -268,4 +289,16 @@ function errorDetails(error: unknown): Record<string, unknown> {
     return { setup: error.validations };
   }
   return {};
+}
+
+class McpToolError extends Error {
+  readonly code: string;
+  readonly details: Record<string, unknown>;
+
+  constructor(code: string, message: string, details: Record<string, unknown> = {}) {
+    super(message);
+    this.name = 'McpToolError';
+    this.code = code;
+    this.details = details;
+  }
 }
