@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import test from 'node:test';
@@ -75,6 +76,34 @@ test('runner status returns idle details before a project has been started', asy
     assert.equal(status.workflowPath, join(cwd, 'workspace', 'WORKFLOW.md'));
     assert.match(status.details.message, /No runner state file/);
   } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('runner manager start reports invalid setup when runner port is occupied', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb24-runner-port-'));
+  const repoPath = join(cwd, 'repo');
+  const workspacePath = join(cwd, 'workspace');
+  const logsPath = join(cwd, 'logs');
+  const runnerPort = 46_110 + Math.trunc(Math.random() * 1000);
+  const server = createServer();
+
+  try {
+    await new Promise<void>((resolvePromise, reject) => {
+      server.once('error', reject);
+      server.listen(runnerPort, '127.0.0.1', resolvePromise);
+    });
+    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    writeFileSync(join(repoPath, 'WORKFLOW.md'), 'Prompt body.');
+
+    const manager = createRunnerManager({ command: process.execPath, commandArgs: persistentNodeRunnerArgs() });
+    const result = await manager.start(managedProject({ repoPath, workspaceRoot: workspacePath, logsRoot: logsPath, runnerPort }));
+
+    assert.equal(result.started, false);
+    assert.equal(result.status.state, 'invalid');
+    assert.match(result.status.details.message, /Runner port .* is already in use/);
+  } finally {
+    await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
     rmSync(cwd, { recursive: true, force: true });
   }
 });

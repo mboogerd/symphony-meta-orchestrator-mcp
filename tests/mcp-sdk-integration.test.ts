@@ -173,7 +173,7 @@ test('SDK MCP runner lifecycle tools use mocked runner and setup probes', async 
       })).runner.state, 'stopped');
       assert.equal(toolPayload(await sdk.client.callTool({
         name: 'validate_project',
-        arguments: { projectId: fixture.project.id }
+        arguments: { projectId: fixture.project.id, phase: 'live' }
       })).status, 'ok');
 
       assert.deepEqual(runnerCalls, ['start:meta-orchestrator', 'status:meta-orchestrator', 'stop:meta-orchestrator']);

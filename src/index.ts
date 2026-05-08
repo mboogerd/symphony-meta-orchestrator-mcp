@@ -22,6 +22,13 @@ export {
   WorkflowSetupValidationError,
   writeProjectWorkflow
 } from './services/workflow/index.ts';
-export type { WorkflowRenderResult, WorkflowSetupIssue, WorkflowSetupValidation } from './services/workflow/index.ts';
+export type {
+  WorkflowRenderResult,
+  WorkflowSetupIssue,
+  WorkflowSetupPhaseResult,
+  WorkflowSetupPhaseResults,
+  WorkflowSetupValidation,
+  WorkflowSetupValidationPhase
+} from './services/workflow/index.ts';
 export { createIdleRunnerStatus, createRunnerManager } from './services/runner/index.ts';
 export type { RunnerManager, RunnerProcessState, RunnerStartResult, RunnerStatus } from './services/runner/index.ts';

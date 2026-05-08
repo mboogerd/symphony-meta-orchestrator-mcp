@@ -41,6 +41,7 @@ export type WorkflowSetupIssue = {
   field: string;
   message: string;
   path?: string;
+  phase?: WorkflowSetupValidationPhase;
   severity?: 'error' | 'warning';
 };
 
@@ -54,6 +55,16 @@ export type WorkflowSetupSubsystemName = 'registry' | 'repo' | 'workflow' | 'lin
 
 export type WorkflowSetupSubsystems = Record<WorkflowSetupSubsystemName, WorkflowSetupSubsystem>;
 
+export type WorkflowSetupValidationPhase = 'schema' | 'render' | 'workspace' | 'live';
+
+export type WorkflowSetupPhaseResult = {
+  ok: boolean;
+  warnings: WorkflowSetupIssue[];
+  errors: WorkflowSetupIssue[];
+};
+
+export type WorkflowSetupPhaseResults = Record<WorkflowSetupValidationPhase, WorkflowSetupPhaseResult>;
+
 export type WorkflowRenderResult = {
   projectId: string;
   workflowPath: string;
@@ -65,6 +76,7 @@ export type WorkflowRenderResult = {
 
 export type WorkflowSetupValidation = {
   ok: boolean;
+  phase: WorkflowSetupValidationPhase;
   projectId: string;
   workflowPath: string;
   repoPath: string;
@@ -73,10 +85,12 @@ export type WorkflowSetupValidation = {
   issues: WorkflowSetupIssue[];
   warnings: WorkflowSetupIssue[];
   subsystems: WorkflowSetupSubsystems;
+  phases: WorkflowSetupPhaseResults;
   workflow?: WorkflowRenderResult;
 };
 
 export type WorkflowSetupValidationOptions = {
+  phase?: WorkflowSetupValidationPhase;
   registry?: ManagedProjectRegistry;
   validateLinear?: boolean;
   env?: Record<string, string | undefined>;
@@ -98,44 +112,66 @@ export async function renderProjectWorkflow(project: ManagedProject): Promise<Wo
 }
 
 export async function validateProjectWorkflowSetup(project: ManagedProject, options: WorkflowSetupValidationOptions = {}): Promise<WorkflowSetupValidation> {
+  const phase = options.phase ?? 'workspace';
   const subsystemIssues = createSubsystems();
+  const phaseIssues = createPhases();
   let workflow: WorkflowRenderResult | undefined;
   const repoPath = resolve(project.repo.path);
   const workspaceRoot = resolve(project.symphony.workspaceRoot);
   const logsRoot = resolve(project.symphony.logsRoot);
   const workflowPath = join(workspaceRoot, 'WORKFLOW.md');
 
-  validateRegistry(options.registry, subsystemIssues.registry);
-  await validateRepo(project, repoPath, subsystemIssues.repo);
-  await validateWritableDirectory(workspaceRoot, 'workspaceRoot', 'workspace_root_unavailable', subsystemIssues.filesystem);
-  await validateWritableDirectory(logsRoot, 'logsRoot', 'logs_root_unavailable', subsystemIssues.filesystem);
-  await validateRunner(project, workspaceRoot, subsystemIssues.runner, options.portAvailable ?? isPortAvailable);
-  await validateLinear(project, options, subsystemIssues.linear);
+  const recordIssue = issueRecorder(subsystemIssues, phaseIssues);
 
-  if (project.workflow.source === 'repo') {
-    await validateRepoWorkflowPath(repoPath, project.workflow.path, subsystemIssues.workflow);
+  validateRegistry(options.registry, recordIssue('registry', 'schema'));
+
+  if (includesPhase(phase, 'render')) {
+    await validateRepoPath(repoPath, recordIssue('repo', 'render'));
   }
 
-  if (subsystemIssues.repo.errors.length === 0 && subsystemIssues.workflow.errors.length === 0) {
-    try {
-      workflow = await renderProjectWorkflow(project);
-      validateRenderedWorkflow(workflow.content, subsystemIssues.workflow);
-      validateCodexPolicy(project, workflow.content, subsystemIssues.codexPolicy);
-    } catch (error) {
-      addIssue(subsystemIssues.workflow, {
-        code: 'workflow_render_failed',
-        field: 'workflow',
-        message: `Workflow could not be rendered: ${error instanceof Error ? error.message : String(error)}`
-      });
+  if (includesPhase(phase, 'workspace') && subsystemIssues.repo.errors.length === 0) {
+    await validateGitConfig(project, repoPath, recordIssue('repo', 'workspace'));
+  }
+
+  if (includesPhase(phase, 'render')) {
+    if (project.workflow.source === 'repo') {
+      await validateRepoWorkflowPath(repoPath, project.workflow.path, recordIssue('workflow', 'render'));
+    }
+
+    if (subsystemIssues.repo.errors.length === 0 && subsystemIssues.workflow.errors.length === 0) {
+      try {
+        workflow = await renderProjectWorkflow(project);
+        validateRenderedWorkflow(workflow.content, recordIssue('workflow', 'render'));
+        validateCodexPolicy(project, workflow.content, recordIssue('codexPolicy', 'render'));
+      } catch (error) {
+        recordIssue('workflow', 'render')({
+          code: 'workflow_render_failed',
+          field: 'workflow',
+          message: `Workflow could not be rendered: ${error instanceof Error ? error.message : String(error)}`
+        });
+      }
     }
   }
 
+  if (includesPhase(phase, 'workspace')) {
+    await validateWritableDirectory(workspaceRoot, 'workspaceRoot', 'workspace_root_unavailable', recordIssue('filesystem', 'workspace'));
+    await validateWritableDirectory(logsRoot, 'logsRoot', 'logs_root_unavailable', recordIssue('filesystem', 'workspace'));
+  }
+
+  if (includesPhase(phase, 'live')) {
+    await validateRunner(project, workspaceRoot, recordIssue('runner', 'live'), options.portAvailable ?? isPortAvailable);
+  }
+
+  await validateLinear(project, options, recordIssue('linear', phase));
+
   const subsystems = finalizeSubsystems(subsystemIssues);
+  const phases = finalizePhases(phaseIssues);
   const issues = Object.values(subsystems).flatMap((subsystem) => subsystem.errors);
   const warnings = Object.values(subsystems).flatMap((subsystem) => subsystem.warnings);
 
   return {
     ok: issues.length === 0,
+    phase,
     projectId: project.id,
     workflowPath,
     repoPath,
@@ -144,6 +180,7 @@ export async function validateProjectWorkflowSetup(project: ManagedProject, opti
     issues,
     warnings,
     subsystems,
+    phases,
     workflow
   };
 }
@@ -153,7 +190,7 @@ export async function validateProjectWorkflowSetups(projects: ManagedProject[], 
 }
 
 export async function writeProjectWorkflow(project: ManagedProject): Promise<WorkflowRenderResult> {
-  const validation = await validateProjectWorkflowSetup(project);
+  const validation = await validateProjectWorkflowSetup(project, { phase: 'workspace' });
 
   if (!validation.ok || validation.workflow === undefined) {
     throw new WorkflowSetupValidationError([validation]);
@@ -189,8 +226,25 @@ function createSubsystems(): Record<WorkflowSetupSubsystemName, { errors: Workfl
   };
 }
 
-function addIssue(subsystem: { errors: WorkflowSetupIssue[]; warnings: WorkflowSetupIssue[] }, issue: WorkflowSetupIssue, severity: 'error' | 'warning' = 'error'): void {
-  subsystem[severity === 'error' ? 'errors' : 'warnings'].push({ ...issue, severity });
+function createPhases(): Record<WorkflowSetupValidationPhase, { errors: WorkflowSetupIssue[]; warnings: WorkflowSetupIssue[] }> {
+  return {
+    schema: { errors: [], warnings: [] },
+    render: { errors: [], warnings: [] },
+    workspace: { errors: [], warnings: [] },
+    live: { errors: [], warnings: [] }
+  };
+}
+
+function issueRecorder(
+  subsystems: ReturnType<typeof createSubsystems>,
+  phases: ReturnType<typeof createPhases>
+) {
+  return (subsystemName: WorkflowSetupSubsystemName, phase: WorkflowSetupValidationPhase) =>
+    (issue: WorkflowSetupIssue, severity: 'error' | 'warning' = 'error'): void => {
+      const nextIssue = { ...issue, phase, severity };
+      subsystems[subsystemName][severity === 'error' ? 'errors' : 'warnings'].push(nextIssue);
+      phases[phase][severity === 'error' ? 'errors' : 'warnings'].push(nextIssue);
+    };
 }
 
 function finalizeSubsystems(subsystems: ReturnType<typeof createSubsystems>): WorkflowSetupSubsystems {
@@ -200,7 +254,21 @@ function finalizeSubsystems(subsystems: ReturnType<typeof createSubsystems>): Wo
   ])) as WorkflowSetupSubsystems;
 }
 
-function validateRegistry(registry: ManagedProjectRegistry | undefined, subsystem: { errors: WorkflowSetupIssue[]; warnings: WorkflowSetupIssue[] }): void {
+function finalizePhases(phases: ReturnType<typeof createPhases>): WorkflowSetupPhaseResults {
+  return Object.fromEntries(Object.entries(phases).map(([name, phase]) => [
+    name,
+    { ok: phase.errors.length === 0, errors: phase.errors, warnings: phase.warnings }
+  ])) as WorkflowSetupPhaseResults;
+}
+
+function includesPhase(selected: WorkflowSetupValidationPhase, candidate: WorkflowSetupValidationPhase): boolean {
+  const order: WorkflowSetupValidationPhase[] = ['schema', 'render', 'workspace', 'live'];
+  return order.indexOf(selected) >= order.indexOf(candidate);
+}
+
+type AddWorkflowSetupIssue = (issue: WorkflowSetupIssue, severity?: 'error' | 'warning') => void;
+
+function validateRegistry(registry: ManagedProjectRegistry | undefined, addIssue: AddWorkflowSetupIssue): void {
   if (registry === undefined) {
     return;
   }
@@ -209,25 +277,17 @@ function validateRegistry(registry: ManagedProjectRegistry | undefined, subsyste
   } catch (error) {
     const messages = error instanceof Error && 'issues' in error && Array.isArray(error.issues) ? error.issues : [error instanceof Error ? error.message : String(error)];
     for (const message of messages) {
-      addIssue(subsystem, { code: 'registry_schema_invalid', field: 'registry', message: String(message) });
+      addIssue({ code: 'registry_schema_invalid', field: 'registry', message: String(message) });
     }
   }
 }
 
-async function validateRepo(project: ManagedProject, repoPath: string, subsystem: { errors: WorkflowSetupIssue[]; warnings: WorkflowSetupIssue[] }): Promise<void> {
-  await validateRepoPath(repoPath, subsystem);
-  if (subsystem.errors.length > 0) {
-    return;
-  }
-  await validateGitConfig(project, repoPath, subsystem);
-}
-
-async function validateRepoPath(repoPath: string, subsystem: { errors: WorkflowSetupIssue[]; warnings: WorkflowSetupIssue[] }): Promise<void> {
+async function validateRepoPath(repoPath: string, addIssue: AddWorkflowSetupIssue): Promise<void> {
   try {
     const repoStat = await stat(repoPath);
 
     if (!repoStat.isDirectory()) {
-      addIssue(subsystem, {
+      addIssue({
         code: 'repo_path_not_directory',
         field: 'repo.path',
         message: 'Repo path exists but is not a directory',
@@ -236,7 +296,7 @@ async function validateRepoPath(repoPath: string, subsystem: { errors: WorkflowS
       return;
     }
   } catch {
-    addIssue(subsystem, {
+    addIssue({
       code: 'repo_path_missing',
       field: 'repo.path',
       message: 'Repo path does not exist',
@@ -248,7 +308,7 @@ async function validateRepoPath(repoPath: string, subsystem: { errors: WorkflowS
   try {
     await access(join(repoPath, '.git'));
   } catch {
-    addIssue(subsystem, {
+    addIssue({
       code: 'repo_path_not_git_repo',
       field: 'repo.path',
       message: 'Repo path is not a git repository',
@@ -257,35 +317,35 @@ async function validateRepoPath(repoPath: string, subsystem: { errors: WorkflowS
   }
 }
 
-async function validateGitConfig(project: ManagedProject, repoPath: string, subsystem: { errors: WorkflowSetupIssue[]; warnings: WorkflowSetupIssue[] }): Promise<void> {
+async function validateGitConfig(project: ManagedProject, repoPath: string, addIssue: AddWorkflowSetupIssue): Promise<void> {
   try {
     const { stdout } = await execFileAsync('git', ['-C', repoPath, 'remote', 'get-url', 'origin']);
     if (stdout.trim().length === 0) {
-      addIssue(subsystem, { code: 'repo_remote_missing', field: 'repo.remoteUrl', message: 'Git origin remote is not configured' }, 'warning');
+      addIssue({ code: 'repo_remote_missing', field: 'repo.remoteUrl', message: 'Git origin remote is not configured' }, 'warning');
     }
   } catch {
-    addIssue(subsystem, { code: 'repo_remote_missing', field: 'repo.remoteUrl', message: 'Git origin remote is not configured' }, 'warning');
+    addIssue({ code: 'repo_remote_missing', field: 'repo.remoteUrl', message: 'Git origin remote is not configured' }, 'warning');
   }
 
   try {
     const { stdout } = await execFileAsync('git', ['-C', repoPath, 'show-ref', '--verify', `refs/heads/${project.repo.defaultBranch}`]);
     if (stdout.trim().length === 0) {
-      addIssue(subsystem, { code: 'repo_default_branch_missing', field: 'repo.defaultBranch', message: `Default branch "${project.repo.defaultBranch}" is not present locally` }, 'warning');
+      addIssue({ code: 'repo_default_branch_missing', field: 'repo.defaultBranch', message: `Default branch "${project.repo.defaultBranch}" is not present locally` }, 'warning');
     }
   } catch {
-    addIssue(subsystem, { code: 'repo_default_branch_missing', field: 'repo.defaultBranch', message: `Default branch "${project.repo.defaultBranch}" is not present locally` }, 'warning');
+    addIssue({ code: 'repo_default_branch_missing', field: 'repo.defaultBranch', message: `Default branch "${project.repo.defaultBranch}" is not present locally` }, 'warning');
   }
 }
 
-async function validateRepoWorkflowPath(repoPath: string, workflowPath: string, subsystem: { errors: WorkflowSetupIssue[]; warnings: WorkflowSetupIssue[] }): Promise<void> {
+async function validateRepoWorkflowPath(repoPath: string, workflowPath: string, addIssue: AddWorkflowSetupIssue): Promise<void> {
   const path = resolve(repoPath, workflowPath);
   try {
     const fileStat = await stat(path);
     if (!fileStat.isFile()) {
-      addIssue(subsystem, { code: 'workflow_path_missing', field: 'workflow.path', message: 'Repo-owned workflow path is not a file', path });
+      addIssue({ code: 'workflow_path_missing', field: 'workflow.path', message: 'Repo-owned workflow path is not a file', path });
     }
   } catch {
-    addIssue(subsystem, { code: 'workflow_path_missing', field: 'workflow.path', message: 'Repo-owned workflow path does not exist', path });
+    addIssue({ code: 'workflow_path_missing', field: 'workflow.path', message: 'Repo-owned workflow path does not exist', path });
   }
 }
 
@@ -293,12 +353,12 @@ async function validateWritableDirectory(
   path: string,
   field: string,
   code: Extract<WorkflowSetupIssueCode, 'workspace_root_unavailable' | 'logs_root_unavailable'>,
-  subsystem: { errors: WorkflowSetupIssue[]; warnings: WorkflowSetupIssue[] }
+  addIssue: AddWorkflowSetupIssue
 ): Promise<void> {
   try {
     await mkdir(path, { recursive: true });
   } catch (error) {
-    addIssue(subsystem, {
+    addIssue({
       code,
       field,
       message: `Directory could not be created: ${error instanceof Error ? error.message : String(error)}`,
@@ -310,35 +370,35 @@ async function validateWritableDirectory(
 async function validateRunner(
   project: ManagedProject,
   workspaceRoot: string,
-  subsystem: { errors: WorkflowSetupIssue[]; warnings: WorkflowSetupIssue[] },
+  addIssue: AddWorkflowSetupIssue,
   portAvailable: PortAvailabilityProbe
 ): Promise<void> {
   const cwd = resolve(project.symphony.cwd ?? workspaceRoot);
   try {
     const cwdStat = await stat(cwd);
     if (!cwdStat.isDirectory()) {
-      addIssue(subsystem, { code: 'runner_cwd_missing', field: 'symphony.cwd', message: 'Runner cwd is not a directory', path: cwd });
+      addIssue({ code: 'runner_cwd_missing', field: 'symphony.cwd', message: 'Runner cwd is not a directory', path: cwd });
     }
   } catch {
-    addIssue(subsystem, { code: 'runner_cwd_missing', field: 'symphony.cwd', message: 'Runner cwd does not exist', path: cwd });
+    addIssue({ code: 'runner_cwd_missing', field: 'symphony.cwd', message: 'Runner cwd does not exist', path: cwd });
   }
 
   if (project.symphony.command.includes('/')) {
     try {
       await access(resolve(project.symphony.command), constants.X_OK);
     } catch {
-      addIssue(subsystem, { code: 'runner_command_not_executable', field: 'symphony.command', message: 'Runner command path is not executable', path: resolve(project.symphony.command) });
+      addIssue({ code: 'runner_command_not_executable', field: 'symphony.command', message: 'Runner command path is not executable', path: resolve(project.symphony.command) });
     }
   } else {
     const found = await commandExists(project.symphony.command);
     if (!found) {
-      addIssue(subsystem, { code: 'runner_command_missing', field: 'symphony.command', message: `Runner command "${project.symphony.command}" was not found on PATH` });
+      addIssue({ code: 'runner_command_missing', field: 'symphony.command', message: `Runner command "${project.symphony.command}" was not found on PATH` });
     }
   }
 
   const isAvailable = await portAvailable(project.symphony.runnerPort);
   if (!isAvailable) {
-    addIssue(subsystem, { code: 'runner_port_unavailable', field: 'symphony.runnerPort', message: `Runner port ${project.symphony.runnerPort} is already in use` });
+    addIssue({ code: 'runner_port_unavailable', field: 'symphony.runnerPort', message: `Runner port ${project.symphony.runnerPort} is already in use` });
   }
 }
 
@@ -360,30 +420,30 @@ function isPortAvailable(port: number): Promise<boolean> {
   });
 }
 
-async function validateLinear(project: ManagedProject, options: WorkflowSetupValidationOptions, subsystem: { errors: WorkflowSetupIssue[]; warnings: WorkflowSetupIssue[] }): Promise<void> {
+async function validateLinear(project: ManagedProject, options: WorkflowSetupValidationOptions, addIssue: AddWorkflowSetupIssue): Promise<void> {
   if (!options.validateLinear) {
     return;
   }
   if (!options.env?.LINEAR_API_KEY) {
-    addIssue(subsystem, { code: 'linear_token_missing', field: 'LINEAR_API_KEY', message: 'Linear API token is required when Linear validation is requested' });
+    addIssue({ code: 'linear_token_missing', field: 'LINEAR_API_KEY', message: 'Linear API token is required when Linear validation is requested' });
   }
   if (project.tracker.projectSlug.trim().length === 0) {
-    addIssue(subsystem, { code: 'linear_project_slug_missing', field: 'tracker.projectSlug', message: 'Linear project slug is required when Linear validation is requested' });
+    addIssue({ code: 'linear_project_slug_missing', field: 'tracker.projectSlug', message: 'Linear project slug is required when Linear validation is requested' });
   }
-  if (subsystem.errors.length > 0) {
+  if (!options.env?.LINEAR_API_KEY || project.tracker.projectSlug.trim().length === 0) {
     return;
   }
   try {
     const linearProject = await createLinearService({ apiKey: options.env.LINEAR_API_KEY }).resolveProjectSlug(project.tracker.projectSlug);
     if (linearProject === undefined || linearProject.id !== project.tracker.projectId) {
-      addIssue(subsystem, {
+      addIssue({
         code: 'linear_project_slug_missing',
         field: 'tracker.projectSlug',
         message: `Linear project slug "${project.tracker.projectSlug}" did not resolve to configured project id`
       });
     }
   } catch (error) {
-    addIssue(subsystem, {
+    addIssue({
       code: 'linear_project_slug_missing',
       field: 'tracker.projectSlug',
       message: `Linear project slug could not be resolved: ${error instanceof Error ? error.message : String(error)}`
@@ -391,21 +451,21 @@ async function validateLinear(project: ManagedProject, options: WorkflowSetupVal
   }
 }
 
-function validateRenderedWorkflow(content: string, subsystem: { errors: WorkflowSetupIssue[]; warnings: WorkflowSetupIssue[] }): void {
+function validateRenderedWorkflow(content: string, addIssue: AddWorkflowSetupIssue): void {
   try {
     const parsed = parseWorkflowTemplate(content);
     if (!isRecord(parsed.frontMatter.tracker) || !isRecord(parsed.frontMatter.workspace) || !isRecord(parsed.frontMatter.codex)) {
-      addIssue(subsystem, { code: 'workflow_front_matter_invalid', field: 'workflow.frontMatter', message: 'Rendered workflow is missing required Symphony front matter sections' });
+      addIssue({ code: 'workflow_front_matter_invalid', field: 'workflow.frontMatter', message: 'Rendered workflow is missing required Symphony front matter sections' });
     }
     if (parsed.body.trim().length === 0) {
-      addIssue(subsystem, { code: 'workflow_prompt_missing', field: 'workflow.prompt', message: 'Rendered workflow prompt body is empty' });
+      addIssue({ code: 'workflow_prompt_missing', field: 'workflow.prompt', message: 'Rendered workflow prompt body is empty' });
     }
   } catch (error) {
-    addIssue(subsystem, { code: 'workflow_front_matter_invalid', field: 'workflow.frontMatter', message: `Rendered workflow front matter is invalid: ${error instanceof Error ? error.message : String(error)}` });
+    addIssue({ code: 'workflow_front_matter_invalid', field: 'workflow.frontMatter', message: `Rendered workflow front matter is invalid: ${error instanceof Error ? error.message : String(error)}` });
   }
 }
 
-function validateCodexPolicy(project: ManagedProject, workflowContent: string, subsystem: { errors: WorkflowSetupIssue[]; warnings: WorkflowSetupIssue[] }): void {
+function validateCodexPolicy(project: ManagedProject, workflowContent: string, addIssue: AddWorkflowSetupIssue): void {
   const expectsGit = /\b(git|GitHub|github|clone|fetch|push|pull|PR)\b/.test(workflowContent);
   const turnSandbox = project.codex.turnSandbox;
   const hasFilesystemWrite = turnSandbox.type === 'workspaceWrite' || turnSandbox.type === 'dangerFullAccess';
@@ -415,11 +475,11 @@ function validateCodexPolicy(project: ManagedProject, workflowContent: string, s
     || (turnSandbox.type === 'externalSandbox' && turnSandbox.networkAccess === 'enabled');
 
   if (expectsGit && !hasFilesystemWrite) {
-    addIssue(subsystem, { code: 'codex_turn_sandbox_missing', field: 'codex.turnSandbox', message: 'Workflow expects git/GitHub operations but turn sandbox does not grant workspace write access' });
+    addIssue({ code: 'codex_turn_sandbox_missing', field: 'codex.turnSandbox', message: 'Workflow expects git/GitHub operations but turn sandbox does not grant workspace write access' });
   }
 
   if (expectsGit && !hasNetworkAccess) {
-    addIssue(subsystem, { code: 'codex_turn_sandbox_missing', field: 'codex.turnSandbox.networkAccess', message: 'Workflow expects git/GitHub operations but turn sandbox does not grant network access' });
+    addIssue({ code: 'codex_turn_sandbox_missing', field: 'codex.turnSandbox.networkAccess', message: 'Workflow expects git/GitHub operations but turn sandbox does not grant network access' });
   }
 }
 

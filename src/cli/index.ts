@@ -28,7 +28,7 @@ export async function runCli(
   }
 
   const command = normalizeCommand(parsed.processedArgs) ?? 'health';
-  const options = parsed.opts<{ config?: string; project?: string }>();
+  const options = parsed.opts<{ config?: string; project?: string; live?: boolean }>();
   const runtime = createRuntimeConfig({ argv, env });
   const logger = createLogger({ name: 'cli', level: runtime.logLevel, sink: stderr });
   logger.debug('loaded runtime configuration', {
@@ -76,6 +76,7 @@ export async function runCli(
         return 1;
       }
       const setup = await validateProjectWorkflowSetups(projects, {
+        phase: options.live ? 'live' : 'workspace',
         registry,
         validateLinear: Boolean(env.SYMPHONY_VALIDATE_LINEAR),
         env
@@ -158,6 +159,7 @@ function createProgram(stdout: NodeJS.WritableStream, stderr: NodeJS.WritableStr
     })
     .option('--config, --config-path <path>', 'Override the config file path')
     .option('--project, --project-id <id>', 'Select a managed project by id')
+    .option('--live', 'Include live runner readiness checks during project validation')
     .argument('[group]', 'Command group or colon command')
     .argument('[action]', 'Command action');
   return program;

@@ -116,7 +116,7 @@ test('MCP integration returns structured tool error when a workflow template is 
   }
 });
 
-test('MCP integration reports missing runner command and unavailable port as structured setup failures', async () => {
+test('MCP integration reports live runner command and port failures when requested', async () => {
   const fixture = createProjectFixture('mrb20-runner-failure-', { command: 'definitely-missing-symphony-runner' });
   const checkedPorts: number[] = [];
 
@@ -129,13 +129,14 @@ test('MCP integration reports missing runner command and unavailable port as str
     });
     await callTool(runtime, 'register', 'register_project', { project: fixture.project });
 
-    const response = await callTool(runtime, 'validate', 'validate_project', { projectId: fixture.project.id });
+    const response = await callTool(runtime, 'validate', 'validate_project', { projectId: fixture.project.id, phase: 'live' });
 
     assertJsonRpcOk(response, 'validate');
     const result = response.result as Record<string, unknown>;
     assert.equal(result.isError, true);
     const payload = toolPayload(response);
     assert.equal(payload.status, 'invalid');
+    assert.equal(payload.setup[0].phase, 'live');
     const codes = payload.setup[0].issues.map((issue: { code: string }) => issue.code);
     assert.deepEqual(codes.sort(), ['runner_command_missing', 'runner_port_unavailable']);
     assert.deepEqual(checkedPorts, [fixture.project.symphony.runnerPort]);

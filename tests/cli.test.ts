@@ -191,6 +191,47 @@ test('CLI workflow render then project validate covers local registry smoke path
   }
 });
 
+test('CLI project validate defaults to workspace phase and --live reports runner failures', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb24-cli-live-'));
+  const repoPath = join(cwd, 'repo');
+  const workspacePath = join(cwd, 'workspace');
+  const logsPath = join(cwd, 'logs');
+  const configPath = join(cwd, 'registry.yaml');
+
+  try {
+    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    writeFileSync(join(repoPath, 'WORKFLOW.md'), 'Prompt body.');
+    writeFileSync(configPath, managedProjectYaml(managedProject({
+      repoPath,
+      workspaceRoot: workspacePath,
+      logsRoot: logsPath,
+      command: 'definitely-missing-symphony-runner'
+    })));
+
+    const env = { ...process.env, SYMPHONY_LOG_LEVEL: 'silent' };
+    const workspace = spawnSync(process.execPath, ['src/cli/index.ts', 'project', 'validate', '--config', configPath], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      env
+    });
+    assert.equal(workspace.status, 0, workspace.stderr);
+    assert.equal(JSON.parse(workspace.stdout).setup[0].phase, 'workspace');
+
+    const live = spawnSync(process.execPath, ['src/cli/index.ts', 'project', 'validate', '--live', '--config', configPath], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      env
+    });
+    assert.equal(live.status, 1);
+    const output = JSON.parse(live.stdout);
+    assert.equal(output.setup[0].phase, 'live');
+    assert.equal(output.setup[0].issues[0].code, 'runner_command_missing');
+    assert.equal(output.setup[0].issues[0].phase, 'live');
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test('CLI runner start status stop covers local runner smoke path', () => {
   const cwd = mkdtempSync(join(tmpdir(), 'mrb13-cli-runner-'));
   const repoPath = join(cwd, 'repo');
