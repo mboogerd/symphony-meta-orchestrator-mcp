@@ -2,6 +2,7 @@ import { openSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
+import { parse as parseShellCommand } from 'shell-quote';
 import type { ManagedProject } from '../registry/index.ts';
 import { validateProjectWorkflowSetup, writeProjectWorkflow, type WorkflowRenderResult } from '../workflow/index.ts';
 
@@ -291,7 +292,14 @@ function parseCommand(command: string, args: string[] | undefined): { file: stri
     return { file: command, args };
   }
 
-  const [file, ...commandArgs] = command.split(' ').filter((part) => part.length > 0);
+  const parsed = parseShellCommand(command, process.env);
+  const unsupported = parsed.find((part) => typeof part !== 'string');
+
+  if (unsupported !== undefined) {
+    throw new Error('Runner command must be a single executable plus arguments; shell operators and globs are not supported');
+  }
+
+  const [file, ...commandArgs] = parsed as string[];
   if (file === undefined) {
     throw new Error('Runner command cannot be empty');
   }

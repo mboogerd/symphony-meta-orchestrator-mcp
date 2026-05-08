@@ -69,6 +69,25 @@ The CLI exposes health, version, and registry list/validate commands. The MCP
 stdio entrypoint exposes managed projects through `resources/list` so later
 workflow, runner, and Linear services can consume the same registry service.
 
+## Library Choices
+
+- MCP protocol handling uses the official `@modelcontextprotocol/sdk` server
+  and stdio transport for the production entrypoint. The earlier bespoke
+  JSON-RPC handler is retained only as a narrow unit-test compatibility surface.
+- Runtime schemas use `zod` for managed-project registry validation and MCP
+  tool input schemas. Custom validation remains only for cross-record registry
+  invariants such as duplicate project identities, paths, and ports.
+- CLI option and positional parsing uses `commander` while preserving the
+  existing colon-command aliases such as `projects:list` and spaced commands
+  such as `projects list`.
+- Runner launch command parsing uses `shell-quote` so quoted executable paths
+  and arguments are parsed correctly. Shell operators, globs, and pipelines are
+  rejected because runner launch uses `spawn` without a shell.
+- Markdown front matter parsing was not added. Workflow rendering currently
+  writes deterministic Markdown from structured project data and does not parse
+  or round-trip front matter, so `gray-matter` would add dependency surface
+  without reducing current risk.
+
 ## Manual M1 Smoke Path
 
 Use a dedicated Symphony runner project in Linear and a local registry entry

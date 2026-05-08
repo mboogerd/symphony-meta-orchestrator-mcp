@@ -1,0 +1,228 @@
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { ListResourcesRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
+import type { RuntimeConfig } from '../config/runtime.ts';
+import { packageInfo } from '../package-info.ts';
+import { createLinearService, LinearServiceError } from '../services/linear/index.ts';
+import {
+  createProjectRegistryService,
+  managedProjectSchema,
+  ProjectRegistryValidationError
+} from '../services/registry/index.ts';
+import { createRunnerManager } from '../services/runner/index.ts';
+import {
+  validateProjectWorkflowSetups,
+  WorkflowSetupValidationError,
+  writeProjectWorkflow
+} from '../services/workflow/index.ts';
+
+const optionalString = z.string().trim().min(1).optional();
+const requiredString = z.string().trim().min(1);
+const linearIssueSchema = {
+  title: requiredString,
+  teamId: optionalString,
+  teamKey: optionalString,
+  description: optionalString,
+  projectId: optionalString,
+  stateId: optionalString,
+  stateName: optionalString,
+  assigneeId: optionalString,
+  priority: z.number().int().min(0).max(4).optional()
+};
+
+export function createMcpServer(runtime: RuntimeConfig): McpServer {
+  const server = new McpServer({
+    name: packageInfo.name,
+    version: packageInfo.version
+  }, {
+    capabilities: {
+      prompts: {},
+      resources: {},
+      tools: {}
+    },
+    instructions: 'Symphony meta-orchestrator control-plane MCP server.'
+  });
+
+  server.server.setRequestHandler(ListResourcesRequestSchema, async () => {
+    const projects = await createProjectRegistryService(runtime.configPath).list();
+    return {
+      resources: projects.map((project) => ({
+        uri: `symphony://projects/${project.id}`,
+        name: project.name,
+        description: `${project.linear.teamKey} managed project at ${project.repo.path}`,
+        mimeType: 'application/yaml'
+      }))
+    };
+  });
+
+  registerTools(server, runtime);
+  return server;
+}
+
+function registerTools(server: McpServer, runtime: RuntimeConfig): void {
+  server.registerTool('list_projects', {
+    description: 'List managed projects from the local registry.'
+  }, async () => toolResult({ projects: await registry(runtime).list() }));
+
+  server.registerTool('get_project', {
+    description: 'Get one managed project from the local registry.',
+    inputSchema: { projectId: requiredString }
+  }, async ({ projectId }) => toolResult({ project: await requireProject(runtime, projectId) }));
+
+  server.registerTool('register_project', {
+    description: 'Register a managed project in the local registry.',
+    inputSchema: { project: managedProjectSchema }
+  }, async ({ project }) => toolResult({ project: await registry(runtime).create(project) }));
+
+  server.registerTool('validate_project', {
+    description: 'Validate one project or all registry projects and workflow setup.',
+    inputSchema: { projectId: optionalString }
+  }, async ({ projectId }) => {
+    const projects = await selectedProjects(runtime, projectId);
+    if (projects.length === 0) {
+      return toolError('project_not_found', 'Project was not found', { projectId });
+    }
+    const setup = await validateProjectWorkflowSetups(projects);
+    return toolResult({ setup }, setup.some((validation) => !validation.ok));
+  });
+
+  server.registerTool('generate_workflow', {
+    description: 'Generate WORKFLOW.md for a managed project.',
+    inputSchema: { projectId: requiredString }
+  }, async ({ projectId }) => toolResult({ workflow: await writeProjectWorkflow(await requireProject(runtime, projectId)) }));
+
+  server.registerTool('create_linear_project', {
+    description: 'Create a Linear project.',
+    inputSchema: {
+      name: requiredString,
+      teamId: optionalString,
+      teamKey: optionalString,
+      description: optionalString,
+      leadId: optionalString
+    }
+  }, async (args) => withToolErrors(async () => toolResult({ project: await linear(runtime).createProject(args) })));
+
+  server.registerTool('create_issue', {
+    description: 'Create one Linear issue.',
+    inputSchema: linearIssueSchema
+  }, async (args) => withToolErrors(async () => toolResult({ issue: await linear(runtime).createIssue(args) })));
+
+  server.registerTool('create_issue_batch', {
+    description: 'Create multiple Linear issues.',
+    inputSchema: { issues: z.array(z.object(linearIssueSchema).strict()) }
+  }, async ({ issues }) => withToolErrors(async () => toolResult({ issues: await linear(runtime).createIssueBatch(issues) })));
+
+  server.registerTool('link_issue_dependency', {
+    description: 'Link two Linear issues with a blocking dependency.',
+    inputSchema: { blockingIssueId: requiredString, blockedIssueId: requiredString }
+  }, async (args) => withToolErrors(async () => toolResult({ dependency: await linear(runtime).createDependency(args) })));
+
+  server.registerTool('move_issue_state', {
+    description: 'Move a Linear issue to a workflow state.',
+    inputSchema: { issueId: requiredString, stateNameOrId: requiredString, teamId: optionalString }
+  }, async ({ issueId, stateNameOrId, teamId }) => withToolErrors(async () => toolResult({
+    issue: await linear(runtime).moveIssueToState(issueId, stateNameOrId, teamId)
+  })));
+
+  for (const name of ['start_runner', 'stop_runner', 'restart_runner', 'get_runner_status'] as const) {
+    server.registerTool(name, {
+      description: `${name.replaceAll('_', ' ')} for a managed project.`,
+      inputSchema: { projectId: requiredString }
+    }, async ({ projectId }) => {
+      const project = await requireProject(runtime, projectId);
+      const manager = createRunnerManager();
+      const runner = name === 'start_runner'
+        ? await manager.start(project)
+        : name === 'stop_runner'
+          ? await manager.stop(project)
+          : name === 'restart_runner'
+            ? await manager.restart(project)
+            : await manager.status(project);
+      return toolResult({ runner });
+    });
+  }
+
+  server.registerTool('tail_runner_logs', {
+    description: 'Read recent runner log lines for a managed project.',
+    inputSchema: {
+      projectId: requiredString,
+      lineCount: z.number().int().min(1).max(1000).optional()
+    }
+  }, async ({ projectId, lineCount }) => {
+    const project = await requireProject(runtime, projectId);
+    return toolResult({ runner: await createRunnerManager().tailLogs(project, lineCount) });
+  });
+}
+
+async function withToolErrors(callback: () => Promise<ReturnType<typeof toolResult>>) {
+  try {
+    return await callback();
+  } catch (error) {
+    return toolError(errorCode(error), error instanceof Error ? error.message : String(error), errorDetails(error));
+  }
+}
+
+function toolResult(payload: Record<string, unknown>, isError = false) {
+  const status = isError ? 'invalid' : 'ok';
+  return {
+    content: [{ type: 'text' as const, text: JSON.stringify({ status, ...payload }, null, 2) }],
+    structuredContent: { status, ...payload },
+    isError
+  };
+}
+
+function toolError(code: string, message: string, details: Record<string, unknown> = {}) {
+  const error = { code, message, details };
+  return {
+    content: [{ type: 'text' as const, text: JSON.stringify({ status: 'error', error }, null, 2) }],
+    structuredContent: { status: 'error', error },
+    isError: true
+  };
+}
+
+function registry(runtime: RuntimeConfig) {
+  return createProjectRegistryService(runtime.configPath);
+}
+
+async function selectedProjects(runtime: RuntimeConfig, projectId: string | undefined) {
+  const projects = await registry(runtime).list();
+  return projectId === undefined ? projects : projects.filter((project) => project.id === projectId);
+}
+
+async function requireProject(runtime: RuntimeConfig, projectId: string) {
+  const [project] = await selectedProjects(runtime, projectId);
+  if (project === undefined) {
+    throw new Error(`Project was not found: ${projectId}`);
+  }
+  return project;
+}
+
+function linear(runtime: RuntimeConfig) {
+  return createLinearService({ apiKey: runtime.env.LINEAR_API_KEY });
+}
+
+function errorCode(error: unknown): string {
+  if (error instanceof LinearServiceError) {
+    return error.code;
+  }
+  if (error instanceof ProjectRegistryValidationError) {
+    return 'invalid_registry';
+  }
+  if (error instanceof WorkflowSetupValidationError) {
+    return 'invalid_workflow_setup';
+  }
+  return 'tool_failed';
+}
+
+function errorDetails(error: unknown): Record<string, unknown> {
+  if (error instanceof LinearServiceError) {
+    return error.details;
+  }
+  if (error instanceof ProjectRegistryValidationError) {
+    return { issues: error.issues };
+  }
+  if (error instanceof WorkflowSetupValidationError) {
+    return { setup: error.validations };
+  }
+  return {};
+}
