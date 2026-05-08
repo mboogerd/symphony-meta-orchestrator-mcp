@@ -85,6 +85,92 @@ test('writeProjectWorkflow renders when runner port is occupied', async () => {
   }
 });
 
+test('workflow safely quotes clone sources and targets in generated hook commands', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb25-workflow-quote-'));
+  const repoPath = join(cwd, 'repo');
+  const workspaceRoot = join(cwd, 'workspace');
+
+  try {
+    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    writeFileSync(join(repoPath, 'WORKFLOW.md'), 'Prompt body.');
+    const project = managedProject({ repoPath, workspaceRoot });
+    project.repo.cloneSource = "https://example.test/repos/name with spaces'and-quotes.git?x=$(touch bad)";
+    project.workflow.runtime = {
+      hooks: {
+        afterCreate: {
+          type: 'gitClone',
+          target: 'repo dir'
+        }
+      }
+    };
+
+    const parsed = parseWorkflow((await renderProjectWorkflow(project)).content);
+
+    assert.equal(
+      parsed.frontMatter.hooks.after_create,
+      'git clone \'https://example.test/repos/name with spaces\'"\'"\'and-quotes.git?x=$(touch bad)\' \'repo dir\''
+    );
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('workflow renders custom tracker, agent, Codex command, and hook settings', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb25-workflow-runtime-'));
+  const repoPath = join(cwd, 'repo');
+  const workspaceRoot = join(cwd, 'workspace');
+
+  try {
+    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    writeFileSync(join(repoPath, 'WORKFLOW.md'), [
+      '---',
+      'tracker:',
+      '  active_states:',
+      '    - Stale',
+      'agent:',
+      '  max_turns: 1',
+      'codex:',
+      '  command: stale',
+      '---',
+      '',
+      'Repo prompt body.'
+    ].join('\n'));
+    const project = managedProject({ repoPath, workspaceRoot });
+    project.workflow.runtime = {
+      tracker: {
+        activeStates: ['Queued', 'Executing'],
+        terminalStates: ['Shipped', 'Abandoned']
+      },
+      agent: {
+        maxConcurrentAgents: 3,
+        maxTurns: 7
+      },
+      codex: {
+        command: 'codex --profile nightly app-server',
+        approvalPolicy: 'on-request'
+      },
+      hooks: {
+        afterCreate: { type: 'none' },
+        beforeRemove: 'rm -rf .cache'
+      }
+    };
+
+    const parsed = parseWorkflow((await renderProjectWorkflow(project)).content);
+
+    assert.equal(parsed.body, 'Repo prompt body.');
+    assert.deepEqual(parsed.frontMatter.tracker.active_states, ['Queued', 'Executing']);
+    assert.deepEqual(parsed.frontMatter.tracker.terminal_states, ['Shipped', 'Abandoned']);
+    assert.equal(parsed.frontMatter.agent.max_concurrent_agents, 3);
+    assert.equal(parsed.frontMatter.agent.max_turns, 7);
+    assert.equal(parsed.frontMatter.codex.command, 'codex --profile nightly app-server');
+    assert.equal(parsed.frontMatter.codex.approval_policy, 'on-request');
+    assert.equal(parsed.frontMatter.hooks.after_create, 'true');
+    assert.equal(parsed.frontMatter.hooks.before_remove, 'rm -rf .cache');
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test('generated workflow renders valid Symphony front matter and prompt body', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'mrb15-workflow-generated-'));
   const repoPath = join(cwd, 'repo');

@@ -511,7 +511,52 @@ function projectSchema() {
         properties: {
           source: stringSchema(),
           path: stringSchema(),
-          template: stringSchema()
+          template: stringSchema(),
+          runtime: {
+            type: 'object',
+            properties: {
+              tracker: {
+                type: 'object',
+                properties: {
+                  activeStates: { type: 'array', items: stringSchema() },
+                  terminalStates: { type: 'array', items: stringSchema() }
+                }
+              },
+              agent: {
+                type: 'object',
+                properties: {
+                  maxConcurrentAgents: { type: 'integer', minimum: 1 },
+                  maxTurns: { type: 'integer', minimum: 1 }
+                }
+              },
+              codex: {
+                type: 'object',
+                properties: {
+                  command: stringSchema(),
+                  approvalPolicy: stringSchema()
+                }
+              },
+              hooks: {
+                type: 'object',
+                properties: {
+                  afterCreate: {
+                    oneOf: [
+                      {
+                        type: 'object',
+                        properties: {
+                          type: stringSchema(),
+                          cloneSource: stringSchema(),
+                          target: stringSchema()
+                        },
+                        required: ['type']
+                      }
+                    ]
+                  },
+                  beforeRemove: stringSchema()
+                }
+              }
+            }
+          }
         },
         required: ['source']
       },

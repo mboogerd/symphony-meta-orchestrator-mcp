@@ -488,6 +488,13 @@ type WorkflowTemplate = {
   body: string;
 };
 
+const DEFAULT_ACTIVE_STATES = ['Todo', 'In Progress', 'In Review'];
+const DEFAULT_TERMINAL_STATES = ['Done', 'Duplicate', 'Canceled', 'Cancelled', 'Closed'];
+const DEFAULT_AGENT_MAX_CONCURRENT = 10;
+const DEFAULT_AGENT_MAX_TURNS = 20;
+const DEFAULT_CODEX_COMMAND = 'codex --config shell_environment_policy.inherit=all app-server';
+const DEFAULT_CODEX_APPROVAL_POLICY = 'never';
+
 async function loadWorkflowTemplate(project: ManagedProject, repoPath: string): Promise<WorkflowTemplate> {
   if (project.workflow.source === 'generated') {
     return {
@@ -539,14 +546,15 @@ function mergeWorkflowFrontMatter(
   project: ManagedProject,
   workspaceRoot: string
 ): Record<string, unknown> {
+  const runtime = project.workflow.runtime;
   return {
     ...existing,
     tracker: {
       ...readRecord(existing.tracker),
       kind: 'linear',
       project_slug: project.tracker.projectSlug,
-      active_states: ['Todo', 'In Progress', 'In Review'],
-      terminal_states: ['Done', 'Duplicate', 'Canceled', 'Cancelled', 'Closed']
+      active_states: runtime?.tracker?.activeStates ?? DEFAULT_ACTIVE_STATES,
+      terminal_states: runtime?.tracker?.terminalStates ?? DEFAULT_TERMINAL_STATES
     },
     workspace: {
       ...readRecord(existing.workspace),
@@ -554,22 +562,48 @@ function mergeWorkflowFrontMatter(
     },
     hooks: {
       ...readRecord(existing.hooks),
-      after_create: `git clone ${project.repo.cloneSource} .`,
-      before_remove: 'true'
+      after_create: renderAfterCreateHook(project),
+      before_remove: runtime?.hooks?.beforeRemove ?? 'true'
     },
     agent: {
       ...readRecord(existing.agent),
-      max_concurrent_agents: 10,
-      max_turns: 20
+      max_concurrent_agents: runtime?.agent?.maxConcurrentAgents ?? DEFAULT_AGENT_MAX_CONCURRENT,
+      max_turns: runtime?.agent?.maxTurns ?? DEFAULT_AGENT_MAX_TURNS
     },
     codex: {
       ...readRecord(existing.codex),
-      command: 'codex --config shell_environment_policy.inherit=all app-server',
-      approval_policy: 'never',
+      command: runtime?.codex?.command ?? DEFAULT_CODEX_COMMAND,
+      approval_policy: runtime?.codex?.approvalPolicy ?? DEFAULT_CODEX_APPROVAL_POLICY,
       thread_sandbox: project.codex.threadSandbox,
       turn_sandbox_policy: project.codex.turnSandbox
     }
   };
+}
+
+function renderAfterCreateHook(project: ManagedProject): string {
+  const hook = project.workflow.runtime?.hooks?.afterCreate;
+
+  if (hook?.type === 'none') {
+    return 'true';
+  }
+
+  const cloneSource = hook?.type === 'gitClone' && hook.cloneSource !== undefined
+    ? hook.cloneSource
+    : project.repo.cloneSource;
+  const target = hook?.type === 'gitClone' && hook.target !== undefined ? hook.target : '.';
+  return shellCommand(['git', 'clone', cloneSource, target]);
+}
+
+function shellCommand(args: string[]): string {
+  return args.map(shellQuote).join(' ');
+}
+
+function shellQuote(value: string): string {
+  if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(value)) {
+    return value;
+  }
+
+  return `'${value.replaceAll("'", "'\"'\"'")}'`;
 }
 
 function renderWorkflowDocument(frontMatter: Record<string, unknown>, body: string): string {

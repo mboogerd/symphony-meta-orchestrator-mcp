@@ -131,6 +131,28 @@ projects:
     workflow:
       source: repo
       path: WORKFLOW.md
+      runtime:
+        tracker:
+          activeStates:
+            - Todo
+            - In Progress
+            - In Review
+          terminalStates:
+            - Done
+            - Duplicate
+            - Canceled
+            - Cancelled
+            - Closed
+        agent:
+          maxConcurrentAgents: 10
+          maxTurns: 20
+        codex:
+          command: codex --config shell_environment_policy.inherit=all app-server
+          approvalPolicy: never
+        hooks:
+          afterCreate:
+            type: gitClone
+          beforeRemove: "true"
     symphony:
       command: mise
       args:
@@ -153,6 +175,17 @@ projects:
 `codex.threadSandbox` is the Codex thread sandbox mode passed to Symphony as
 `codex.thread_sandbox`. Supported registry values are `read-only`,
 `workspace-write`, and `danger-full-access`.
+
+`workflow.runtime` is optional. When omitted, workflow rendering uses the
+defaults shown above: active states `Todo`, `In Progress`, and `In Review`;
+terminal states `Done`, `Duplicate`, `Canceled`, `Cancelled`, and `Closed`;
+agent limits of 10 concurrent agents and 20 turns; Codex command
+`codex --config shell_environment_policy.inherit=all app-server`; approval
+policy `never`; `beforeRemove: "true"`; and an `afterCreate` `gitClone` hook
+that clones `repo.cloneSource` into `.`. The generated git clone hook shell
+quotes clone sources and targets that require quoting. Set
+`workflow.runtime.hooks.afterCreate.type` to `none` to render a no-op hook, or
+set `cloneSource` and `target` on the `gitClone` hook to override either value.
 
 `codex.turnSandbox` is the Codex turn sandbox policy map rendered into
 WORKFLOW.md as `codex.turn_sandbox_policy`. Use these common policies:
