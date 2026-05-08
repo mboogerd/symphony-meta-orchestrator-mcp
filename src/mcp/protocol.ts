@@ -97,6 +97,43 @@ export async function handleMcpMessage(message: unknown, runtime: RuntimeConfig)
             stateNameOrId: stringSchema(),
             teamId: stringSchema()
           }, ['issueId', 'stateNameOrId']),
+          tool('create_project_issue', 'Create one issue in a managed Linear project using registry defaults.', {
+            projectId: stringSchema(),
+            ...projectIssueSchema()
+          }, ['projectId', 'title']),
+          tool('create_planned_issue_batch', 'Create multiple planned issues in a managed Linear project and link dependencies by stable client keys.', {
+            projectId: stringSchema(),
+            issues: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  key: stringSchema(),
+                  ...projectIssueSchema()
+                },
+                required: ['key', 'title'],
+                additionalProperties: false
+              }
+            },
+            dependencies: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: { from: stringSchema(), blocks: stringSchema() },
+                required: ['from', 'blocks'],
+                additionalProperties: false
+              }
+            }
+          }, ['projectId', 'issues']),
+          tool('promote_ready_issue', 'Explicitly move a managed-project issue from Backlog to Todo.', {
+            projectId: stringSchema(),
+            issueId: stringSchema()
+          }, ['projectId', 'issueId']),
+          tool('link_project_issue_dependency', 'Link two issues in a managed Linear project with a blocking dependency.', {
+            projectId: stringSchema(),
+            blockingIssueId: stringSchema(),
+            blockedIssueId: stringSchema()
+          }, ['projectId', 'blockingIssueId', 'blockedIssueId']),
           tool('start_runner', 'Start the Symphony runner for a managed project.', { projectId: stringSchema() }, ['projectId']),
           tool('stop_runner', 'Stop the Symphony runner for a managed project.', { projectId: stringSchema() }, ['projectId']),
           tool('restart_runner', 'Restart the Symphony runner for a managed project.', { projectId: stringSchema() }, ['projectId']),
@@ -175,6 +212,40 @@ async function handleToolCall(message: JsonRpcRequest, runtime: RuntimeConfig): 
           requiredString(argumentsValue.stateNameOrId, 'stateNameOrId'),
           optionalString(argumentsValue.teamId)
         )
+      });
+    }
+
+    if (name === 'create_project_issue') {
+      const { projectId, ...issue } = argumentsValue;
+      return toolResult(message.id ?? null, {
+        issue: await linear(runtime).createProjectIssue(await requireProject(runtime, projectId), issue as never)
+      });
+    }
+
+    if (name === 'create_planned_issue_batch') {
+      return toolResult(message.id ?? null, {
+        batch: await linear(runtime).createPlannedIssueBatch(await requireProject(runtime, argumentsValue.projectId), {
+          issues: Array.isArray(argumentsValue.issues) ? argumentsValue.issues as never : [],
+          dependencies: Array.isArray(argumentsValue.dependencies) ? argumentsValue.dependencies as never : undefined
+        })
+      });
+    }
+
+    if (name === 'promote_ready_issue') {
+      return toolResult(message.id ?? null, {
+        issue: await linear(runtime).promoteReadyIssue(
+          await requireProject(runtime, argumentsValue.projectId),
+          requiredString(argumentsValue.issueId, 'issueId')
+        )
+      });
+    }
+
+    if (name === 'link_project_issue_dependency') {
+      return toolResult(message.id ?? null, {
+        dependency: await linear(runtime).linkProjectIssueDependency(await requireProject(runtime, argumentsValue.projectId), {
+          blockingIssueId: requiredString(argumentsValue.blockingIssueId, 'blockingIssueId'),
+          blockedIssueId: requiredString(argumentsValue.blockedIssueId, 'blockedIssueId')
+        })
       });
     }
 
@@ -351,7 +422,20 @@ function linearIssueSchema(): Record<string, unknown> {
     stateId: stringSchema(),
     stateName: stringSchema(),
     assigneeId: stringSchema(),
-    priority: { type: 'integer', minimum: 0, maximum: 4 }
+    priority: { type: 'integer', minimum: 0, maximum: 4 },
+    labelIds: { type: 'array', items: stringSchema() }
+  };
+}
+
+function projectIssueSchema(): Record<string, unknown> {
+  return {
+    title: stringSchema(),
+    description: stringSchema(),
+    stateId: stringSchema(),
+    stateName: stringSchema(),
+    assigneeId: stringSchema(),
+    priority: { type: 'integer', minimum: 0, maximum: 4 },
+    labelIds: { type: 'array', items: stringSchema() }
   };
 }
 
