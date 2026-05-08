@@ -98,6 +98,7 @@ export type LinearServiceOptions = {
 };
 
 export type LinearSdkClient = {
+  issue(id: string): Promise<LinearIssueLike | undefined>;
   createProject(input: Record<string, unknown>): Promise<LinearPayload<'project', LinearProjectLike>>;
   createIssue(input: Record<string, unknown>): Promise<LinearPayload<'issue', LinearIssueLike>>;
   createIssueBatch(input: Record<string, unknown>): Promise<LinearPayload<'issues', LinearIssueLike[]>>;
@@ -112,7 +113,14 @@ type LinearPayload<Key extends string, Value> = { success?: boolean } & { [K in 
 type LinearConnection<Node> = { nodes: Node[] };
 type LinearTeamLike = { id: string; key?: string; name?: string };
 type LinearProjectLike = { id: string; name: string; slugId?: string; url?: string };
-type LinearIssueLike = { id: string; identifier: string; url?: string; state?: Promise<LinearWorkflowStateLike> | LinearWorkflowStateLike };
+type LinearIssueLike = {
+  id: string;
+  identifier: string;
+  url?: string;
+  state?: Promise<LinearWorkflowStateLike> | LinearWorkflowStateLike;
+  team?: Promise<LinearTeamLike> | LinearTeamLike;
+  project?: Promise<LinearProjectLike | undefined> | LinearProjectLike;
+};
 type LinearRelationLike = { id: string; type: string; issueId?: string; relatedIssueId?: string };
 type LinearWorkflowStateLike = { id: string; name: string; type?: string };
 
@@ -291,11 +299,22 @@ export class LinearService {
   }
 
   async promoteReadyIssue(project: ManagedProject, issueId: string): Promise<LinearIssueReference> {
+    await this.assertManagedProjectIssue(project, issueId, 'promote_ready_issue');
     return this.moveIssueToState(issueId, 'Todo', project.tracker.teamId);
   }
 
   async linkProjectIssueDependency(project: ManagedProject, input: CreateLinearDependencyInput): Promise<{ id: string; type: string }> {
-    void project;
+    if (input.blockingIssueId === input.blockedIssueId) {
+      throw new LinearServiceError(
+        'invalid_dependency_direction',
+        'link_project_issue_dependency',
+        'Dependency direction must reference two distinct managed project issues',
+        { blockingIssueId: input.blockingIssueId, blockedIssueId: input.blockedIssueId }
+      );
+    }
+
+    await this.assertManagedProjectIssue(project, input.blockingIssueId, 'link_project_issue_dependency', 'blockingIssueId');
+    await this.assertManagedProjectIssue(project, input.blockedIssueId, 'link_project_issue_dependency', 'blockedIssueId');
     return this.createDependency(input);
   }
 
@@ -346,6 +365,33 @@ export class LinearService {
     }
 
     return state.id;
+  }
+
+  private async assertManagedProjectIssue(project: ManagedProject, issueId: string, operation: string, role = 'issueId'): Promise<void> {
+    const issue = await this.client.issue(issueId);
+    if (!issue) {
+      throw new LinearServiceError('missing_issue', operation, `Linear issue "${issueId}" was not found`, { issueId, role });
+    }
+
+    const team = await issue.team;
+    if (!team || team.id !== project.tracker.teamId) {
+      throw new LinearServiceError(
+        'wrong_team',
+        operation,
+        `Linear issue "${issueId}" is not in the managed team`,
+        { issueId, role, expectedTeamId: project.tracker.teamId, actualTeamId: team?.id }
+      );
+    }
+
+    const issueProject = await issue.project;
+    if (!issueProject || issueProject.id !== project.tracker.projectId) {
+      throw new LinearServiceError(
+        'wrong_project',
+        operation,
+        `Linear issue "${issueId}" is not in the managed project`,
+        { issueId, role, expectedProjectId: project.tracker.projectId, actualProjectId: issueProject?.id }
+      );
+    }
   }
 
   private async wrap<T>(operation: string, action: () => Promise<T>): Promise<T> {
