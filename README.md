@@ -76,7 +76,10 @@ SYMPHONY_RUNNER_READINESS_POLL_INTERVAL_MS=500
 `LINEAR_API_KEY` is required for Linear project and issue creation. Registry,
 workflow, and runner status commands can run without it. Override
 `SYMPHONY_RUNNER_COMMAND` during local tests when you want the runner manager to
-launch a known local command instead of the registry command.
+launch a known local executable instead of the registry command. Runner launch
+arguments are not parsed from this environment variable; configure stable
+arguments with `symphony.args` in the registry so they are passed to `spawn` as
+structured argv entries.
 `SYMPHONY_RUNNER_READINESS_TIMEOUT_MS` controls how long `runner start` waits
 for the configured dashboard/API URL to respond before reporting the runner as
 unhealthy. `SYMPHONY_RUNNER_READINESS_POLL_INTERVAL_MS` controls the polling
@@ -222,6 +225,8 @@ WORKFLOW.md as `codex.turn_sandbox_policy`. Use these common policies:
   push, pull, or PR operations.
 - `type: dangerFullAccess` only for fully trusted workspaces that need host
   filesystem semantics beyond the workspace-write sandbox.
+- `type: externalSandbox` for externally managed isolation. Its
+  `networkAccess`, when provided, must be `restricted` or `enabled`.
 
 Existing registry files that use legacy string shorthand for `turnSandbox`
 continue to load. The shorthand is normalized as `read-only` ->
@@ -266,9 +271,13 @@ plan.
 - CLI option and positional parsing uses `commander` while preserving the
   existing colon-command aliases such as `projects:list` and spaced commands
   such as `projects list`.
-- Runner launch command parsing uses `shell-quote` so quoted executable paths
-  and arguments are parsed correctly. Shell operators, globs, and pipelines are
-  rejected because runner launch uses `spawn` without a shell.
+- Runner launch uses structured `symphony.command` and `symphony.args`
+  registry fields. The runner manager passes those values directly to Node's
+  `spawn` without a shell, then appends the managed `--port`, `--logs-root`,
+  and rendered workflow path arguments. No `shell-quote` dependency is used or
+  required for runner startup.
+- Generated workflow hooks use a small internal shell-quoting helper only when
+  rendering deterministic hook strings such as the default `git clone` command.
 - Markdown front matter parsing was not added. Workflow rendering currently
   writes deterministic Markdown from structured project data and does not parse
   or round-trip front matter, so `gray-matter` would add dependency surface
