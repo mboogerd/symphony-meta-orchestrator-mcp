@@ -31,7 +31,14 @@ const baseProject: ManagedProject = {
     path: 'WORKFLOW.md'
   },
   symphony: {
-    command: 'npx --yes symphony',
+    command: 'mise',
+    args: [
+      'exec',
+      '--',
+      './bin/symphony',
+      '--i-understand-that-this-will-be-running-without-the-usual-guardrails'
+    ],
+    cwd: '/tmp/symphony',
     runnerPort: 4101,
     workspaceRoot: '/tmp/symphony-workspaces/meta-orchestrator',
     logsRoot: '/tmp/symphony-logs/meta-orchestrator'

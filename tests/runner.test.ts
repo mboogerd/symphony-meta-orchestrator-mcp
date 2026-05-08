@@ -103,21 +103,34 @@ test('runner manager tails bounded log lines', async () => {
   }
 });
 
-test('runner command parsing preserves quoted arguments and rejects shell operators', async () => {
-  const cwd = mkdtempSync(join(tmpdir(), 'mrb18-runner-command-'));
+test('runner manager builds exact Elixir Symphony CLI argv from structured registry fields', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb16-runner-command-'));
   const repoPath = join(cwd, 'repo');
   const workspacePath = join(cwd, 'workspace');
   const logsPath = join(cwd, 'logs');
-  const calls: Array<{ command: string; args: string[] }> = [];
+  const installPath = join(cwd, 'symphony-install');
+  const calls: Array<{ command: string; args: string[]; cwd?: string }> = [];
 
   try {
     spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
     writeFileSync(join(repoPath, 'WORKFLOW.md'), ['---', 'tracker:', '  kind: linear', '---', '', 'Prompt body.'].join('\n'));
-    const project = managedProject({ repoPath, workspaceRoot: workspacePath, logsRoot: logsPath });
+    mkdirSync(installPath, { recursive: true });
+    const project = managedProject({
+      repoPath,
+      workspaceRoot: workspacePath,
+      logsRoot: logsPath,
+      command: 'mise',
+      args: [
+        'exec',
+        '--',
+        './bin/symphony',
+        '--i-understand-that-this-will-be-running-without-the-usual-guardrails'
+      ],
+      cwd: installPath
+    });
     const manager = createRunnerManager({
-      command: `${process.execPath} -e "setInterval(() => {}, 1000)"`,
-      spawnProcess: ((command, args) => {
-        calls.push({ command, args: args ?? [] });
+      spawnProcess: ((command, args, options) => {
+        calls.push({ command, args: args ?? [], cwd: options?.cwd?.toString() });
         return {
           pid: 12345,
           unref() {}
@@ -125,14 +138,25 @@ test('runner command parsing preserves quoted arguments and rejects shell operat
       }) as never
     });
 
-    await manager.start(project);
-    assert.equal(calls[0]?.command, process.execPath);
-    assert.deepEqual(calls[0]?.args.slice(0, 2), ['-e', 'setInterval(() => {}, 1000)']);
-
-    await assert.rejects(
-      createRunnerManager({ command: `${process.execPath} -e "ok" && echo nope` }).start(project),
-      /shell operators and globs are not supported/
-    );
+    const started = await manager.start(project);
+    assert.equal(calls[0]?.command, 'mise');
+    assert.deepEqual(calls[0]?.args, [
+      'exec',
+      '--',
+      './bin/symphony',
+      '--i-understand-that-this-will-be-running-without-the-usual-guardrails',
+      '--port',
+      '4310',
+      '--logs-root',
+      logsPath,
+      join(workspacePath, 'WORKFLOW.md')
+    ]);
+    assert.equal(calls[0]?.cwd, installPath);
+    assert.equal(started.status.command, 'mise');
+    assert.deepEqual(started.status.args, calls[0]?.args);
+    assert.equal(started.status.cwd, installPath);
+    assert.equal(started.status.workflowPath, join(workspacePath, 'WORKFLOW.md'));
+    assert.equal(started.status.logPath, join(logsPath, 'meta-orchestrator.runner.log'));
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

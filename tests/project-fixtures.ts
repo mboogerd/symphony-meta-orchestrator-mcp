@@ -6,6 +6,8 @@ export function managedProject(paths: {
   logsRoot?: string;
   runnerPort?: number;
   command?: string;
+  args?: string[];
+  cwd?: string;
 }): ManagedProject {
   return {
     id: 'meta-orchestrator',
@@ -28,7 +30,9 @@ export function managedProject(paths: {
       path: 'WORKFLOW.md'
     },
     symphony: {
-      command: paths.command ?? 'npx --yes symphony',
+      command: paths.command ?? 'symphony',
+      args: paths.args,
+      cwd: paths.cwd,
       runnerPort: paths.runnerPort ?? 4310,
       workspaceRoot: paths.workspaceRoot,
       logsRoot: paths.logsRoot ?? `${paths.workspaceRoot}/logs`
@@ -65,6 +69,11 @@ export function managedProjectYaml(project: ManagedProject): string {
     ...workflowBody,
     '    symphony:',
     `      command: ${project.symphony.command}`,
+    ...(project.symphony.args === undefined ? [] : [
+      '      args:',
+      ...project.symphony.args.map((arg) => `        - ${JSON.stringify(arg)}`)
+    ]),
+    ...(project.symphony.cwd === undefined ? [] : [`      cwd: ${project.symphony.cwd}`]),
     `      runnerPort: ${project.symphony.runnerPort}`,
     `      workspaceRoot: ${project.symphony.workspaceRoot}`,
     `      logsRoot: ${project.symphony.logsRoot}`,
