@@ -80,7 +80,10 @@ export type WorkflowSetupValidationOptions = {
   registry?: ManagedProjectRegistry;
   validateLinear?: boolean;
   env?: Record<string, string | undefined>;
+  portAvailable?: PortAvailabilityProbe;
 };
+
+export type PortAvailabilityProbe = (port: number) => Promise<boolean>;
 
 export async function renderProjectWorkflow(project: ManagedProject): Promise<WorkflowRenderResult> {
   const repoPath = resolve(project.repo.path);
@@ -106,7 +109,7 @@ export async function validateProjectWorkflowSetup(project: ManagedProject, opti
   await validateRepo(project, repoPath, subsystemIssues.repo);
   await validateWritableDirectory(workspaceRoot, 'workspaceRoot', 'workspace_root_unavailable', subsystemIssues.filesystem);
   await validateWritableDirectory(logsRoot, 'logsRoot', 'logs_root_unavailable', subsystemIssues.filesystem);
-  await validateRunner(project, workspaceRoot, subsystemIssues.runner);
+  await validateRunner(project, workspaceRoot, subsystemIssues.runner, options.portAvailable ?? isPortAvailable);
   await validateLinear(project, options, subsystemIssues.linear);
 
   if (project.workflow.source === 'repo') {
@@ -304,7 +307,12 @@ async function validateWritableDirectory(
   }
 }
 
-async function validateRunner(project: ManagedProject, workspaceRoot: string, subsystem: { errors: WorkflowSetupIssue[]; warnings: WorkflowSetupIssue[] }): Promise<void> {
+async function validateRunner(
+  project: ManagedProject,
+  workspaceRoot: string,
+  subsystem: { errors: WorkflowSetupIssue[]; warnings: WorkflowSetupIssue[] },
+  portAvailable: PortAvailabilityProbe
+): Promise<void> {
   const cwd = resolve(project.symphony.cwd ?? workspaceRoot);
   try {
     const cwdStat = await stat(cwd);
@@ -328,8 +336,8 @@ async function validateRunner(project: ManagedProject, workspaceRoot: string, su
     }
   }
 
-  const portAvailable = await isPortAvailable(project.symphony.runnerPort);
-  if (!portAvailable) {
+  const isAvailable = await portAvailable(project.symphony.runnerPort);
+  if (!isAvailable) {
     addIssue(subsystem, { code: 'runner_port_unavailable', field: 'symphony.runnerPort', message: `Runner port ${project.symphony.runnerPort} is already in use` });
   }
 }

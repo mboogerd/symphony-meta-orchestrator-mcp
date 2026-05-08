@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -117,10 +116,15 @@ test('MCP integration returns structured tool error when a workflow template is 
 
 test('MCP integration reports missing runner command and unavailable port as structured setup failures', async () => {
   const fixture = createProjectFixture('mrb20-runner-failure-', { command: 'definitely-missing-symphony-runner' });
-  const server = await listenOn(fixture.project.symphony.runnerPort);
+  const checkedPorts: number[] = [];
 
   try {
-    const runtime = runtimeFor(fixture.configPath);
+    const runtime = runtimeFor(fixture.configPath, {
+      portAvailable: async (port) => {
+        checkedPorts.push(port);
+        return false;
+      }
+    });
     await callTool(runtime, 'register', 'register_project', { project: fixture.project });
 
     const response = await callTool(runtime, 'validate', 'validate_project', { projectId: fixture.project.id });
@@ -132,8 +136,8 @@ test('MCP integration reports missing runner command and unavailable port as str
     assert.equal(payload.status, 'invalid');
     const codes = payload.setup[0].issues.map((issue: { code: string }) => issue.code);
     assert.deepEqual(codes.sort(), ['runner_command_missing', 'runner_port_unavailable']);
+    assert.deepEqual(checkedPorts, [fixture.project.symphony.runnerPort]);
   } finally {
-    await closeServer(server);
     fixture.cleanup();
   }
 });
@@ -314,18 +318,4 @@ function mockLinearClient(calls: Array<{ method: string; input: Record<string, u
       return { nodes: [{ id: 'state-backlog', name: 'Backlog', type: 'backlog' }] };
     }
   };
-}
-
-function listenOn(port: number): Promise<Server> {
-  return new Promise((resolvePromise, reject) => {
-    const server = createServer();
-    server.once('error', reject);
-    server.listen(port, '127.0.0.1', () => resolvePromise(server));
-  });
-}
-
-function closeServer(server: Server): Promise<void> {
-  return new Promise((resolvePromise, reject) => {
-    server.close((error) => error ? reject(error) : resolvePromise());
-  });
 }

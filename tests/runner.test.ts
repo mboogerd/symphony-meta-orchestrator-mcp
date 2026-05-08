@@ -19,7 +19,7 @@ test('runner manager starts, reports, prevents duplicate starts, stops, and rest
     const project = managedProject({ repoPath, workspaceRoot: workspacePath, logsRoot: logsPath });
     const manager = createRunnerManager({
       command: process.execPath,
-      commandArgs: ['-e', 'setInterval(() => {}, 1000)']
+      commandArgs: persistentNodeRunnerArgs()
     });
 
     const started = await manager.start(project);
@@ -66,7 +66,7 @@ test('runner status returns idle details before a project has been started', asy
       workspaceRoot: join(cwd, 'workspace'),
       logsRoot: join(cwd, 'logs')
     });
-    const manager = createRunnerManager({ command: process.execPath, commandArgs: ['-e', 'setInterval(() => {}, 1000)'] });
+    const manager = createRunnerManager({ command: process.execPath, commandArgs: persistentNodeRunnerArgs() });
 
     const status = await manager.status(project);
     assert.equal(status.state, 'idle');
@@ -89,7 +89,7 @@ test('runner manager tails bounded log lines', async () => {
       workspaceRoot: join(cwd, 'workspace'),
       logsRoot: logsPath
     });
-    const manager = createRunnerManager({ command: process.execPath, commandArgs: ['-e', 'setInterval(() => {}, 1000)'] });
+    const manager = createRunnerManager({ command: process.execPath, commandArgs: persistentNodeRunnerArgs() });
     mkdirSync(logsPath, { recursive: true });
     writeFileSync(join(logsPath, 'meta-orchestrator.runner.log'), 'one\ntwo\nthree\n');
 
@@ -102,6 +102,10 @@ test('runner manager tails bounded log lines', async () => {
     rmSync(cwd, { recursive: true, force: true });
   }
 });
+
+function persistentNodeRunnerArgs(): string[] {
+  return ['-e', 'setInterval(() => {}, 1000)', '--'];
+}
 
 test('runner manager builds exact Elixir Symphony CLI argv from structured registry fields', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'mrb16-runner-command-'));

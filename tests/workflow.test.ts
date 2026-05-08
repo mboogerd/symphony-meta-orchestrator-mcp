@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -159,21 +158,24 @@ test('operational validation requires Linear slug when Linear validation is requ
 
 test('operational validation detects unavailable runner port', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'mrb17-port-'));
-  const server = createServer();
 
   try {
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const port = (server.address() as { port: number }).port;
-    const project = managedProject({ repoPath: join(cwd, 'repo'), workspaceRoot: join(cwd, 'workspace'), logsRoot: join(cwd, 'logs'), runnerPort: port });
+    const project = managedProject({ repoPath: join(cwd, 'repo'), workspaceRoot: join(cwd, 'workspace'), logsRoot: join(cwd, 'logs'), runnerPort: 4310 });
     spawnSync('git', ['init', project.repo.path], { encoding: 'utf8' });
     writeFileSync(join(project.repo.path, 'WORKFLOW.md'), 'Prompt body.');
 
-    const validation = await validateProjectWorkflowSetup(project);
+    const checkedPorts: number[] = [];
+    const validation = await validateProjectWorkflowSetup(project, {
+      portAvailable: async (port) => {
+        checkedPorts.push(port);
+        return false;
+      }
+    });
 
     assert.equal(validation.ok, false);
     assert.equal(validation.subsystems.runner.errors[0]?.code, 'runner_port_unavailable');
+    assert.deepEqual(checkedPorts, [4310]);
   } finally {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
     rmSync(cwd, { recursive: true, force: true });
   }
 });
