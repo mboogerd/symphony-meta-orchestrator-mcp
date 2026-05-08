@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -72,6 +72,30 @@ test('runner status returns idle details before a project has been started', asy
     assert.equal(status.dashboardUrl, 'http://localhost:4310');
     assert.equal(status.workflowPath, join(cwd, 'workspace', 'WORKFLOW.md'));
     assert.match(status.details.message, /No runner state file/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('runner manager tails bounded log lines', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb12-runner-logs-'));
+  const logsPath = join(cwd, 'logs');
+
+  try {
+    const project = managedProject({
+      repoPath: join(cwd, 'repo'),
+      workspacePath: join(cwd, 'workspace'),
+      logsPath
+    });
+    const manager = createRunnerManager({ command: process.execPath, commandArgs: ['-e', 'setInterval(() => {}, 1000)'] });
+    mkdirSync(logsPath, { recursive: true });
+    writeFileSync(join(logsPath, 'meta-orchestrator.runner.log'), 'one\ntwo\nthree\n');
+
+    const logs = await manager.tailLogs(project, 2);
+
+    assert.deepEqual(logs.lines, ['two', 'three']);
+    assert.equal(logs.lineCount, 3);
+    assert.equal(logs.truncated, true);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
