@@ -30,7 +30,14 @@ test('MCP tools/list exposes workflow setup tools', async () => {
 
   assert.equal(response?.jsonrpc, '2.0');
   const tools = ((response?.result as Record<string, unknown>).tools as Array<Record<string, unknown>>);
-  assert.deepEqual(tools.map((tool) => tool.name), ['projects_validate_setup', 'workflows_render']);
+  assert.deepEqual(tools.map((tool) => tool.name), [
+    'projects_validate_setup',
+    'workflows_render',
+    'runners_start',
+    'runners_stop',
+    'runners_restart',
+    'runners_status'
+  ]);
 });
 
 test('MCP resources/list exposes managed projects from YAML registry', async () => {
