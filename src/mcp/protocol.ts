@@ -3,7 +3,7 @@ import { packageInfo } from '../package-info.ts';
 import { createLinearService, LinearServiceError, type LinearService } from '../services/linear/index.ts';
 import { createProjectRegistryService, ProjectRegistryValidationError, type ManagedProject } from '../services/registry/index.ts';
 import { createRunnerManager, type RunnerManager } from '../services/runner/index.ts';
-import { validateProjectWorkflowSetups, WorkflowSetupValidationError, writeProjectWorkflow } from '../services/workflow/index.ts';
+import { validateProjectWorkflowSetups, WorkflowSetupValidationError, writeProjectWorkflow, type PortAvailabilityProbe } from '../services/workflow/index.ts';
 
 export type JsonRpcRequest = {
   jsonrpc: '2.0';
@@ -25,6 +25,7 @@ export type JsonRpcResponse = {
 export type McpRuntimeServices = {
   createLinearService?: (runtime: RuntimeConfig) => LinearService;
   createRunnerManager?: (runtime: RuntimeConfig) => RunnerManager;
+  portAvailable?: PortAvailabilityProbe;
 };
 
 export type McpRuntimeConfig = RuntimeConfig & {
@@ -196,7 +197,8 @@ async function handleToolCall(message: JsonRpcRequest, runtime: McpRuntimeConfig
       const setup = await validateProjectWorkflowSetups(projects, {
         registry: loadedRegistry,
         validateLinear: argumentsValue.validateLinear === true,
-        env: runtime.env
+        env: runtime.env,
+        portAvailable: runtime.mcpServices?.portAvailable
       });
       return toolResult(message.id ?? null, { setup }, setup.some((validation) => !validation.ok));
     }
