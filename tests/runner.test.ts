@@ -15,6 +15,7 @@ test('runner manager starts, reports, prevents duplicate starts, stops, and rest
 
   try {
     spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    writeFileSync(join(repoPath, 'WORKFLOW.md'), ['---', 'tracker:', '  kind: linear', '---', '', 'Prompt body.'].join('\n'));
     const project = managedProject({ repoPath, workspaceRoot: workspacePath, logsRoot: logsPath });
     const manager = createRunnerManager({
       command: process.execPath,
@@ -26,7 +27,7 @@ test('runner manager starts, reports, prevents duplicate starts, stops, and rest
     assert.equal(started.status.state, 'running');
     assert.equal(started.status.port, 4310);
     assert.equal(started.status.dashboardUrl, 'http://localhost:4310');
-    assert.equal(started.status.workflowPath, join(repoPath, 'WORKFLOW.md'));
+    assert.equal(started.status.workflowPath, join(workspacePath, 'WORKFLOW.md'));
     assert.equal(started.status.logPath, join(logsPath, 'meta-orchestrator.runner.log'));
     assert.equal(existsSync(started.status.statePath), true);
     assert.equal(existsSync(started.status.workflowPath), true);
@@ -111,6 +112,7 @@ test('runner command parsing preserves quoted arguments and rejects shell operat
 
   try {
     spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    writeFileSync(join(repoPath, 'WORKFLOW.md'), ['---', 'tracker:', '  kind: linear', '---', '', 'Prompt body.'].join('\n'));
     const project = managedProject({ repoPath, workspaceRoot: workspacePath, logsRoot: logsPath });
     const manager = createRunnerManager({
       command: `${process.execPath} -e "setInterval(() => {}, 1000)"`,

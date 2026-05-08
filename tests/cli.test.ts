@@ -4,6 +4,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import YAML from 'yaml';
 import { managedProject, managedProjectYaml } from './project-fixtures.ts';
 
 test('CLI health command returns JSON status', () => {
@@ -128,7 +129,7 @@ test('CLI project validate fails with structured setup output for missing repo p
   }
 });
 
-test('CLI workflows:render writes project workflow with required handoff paths', () => {
+test('CLI workflows:render writes project workflow with required runtime front matter', () => {
   const cwd = mkdtempSync(join(tmpdir(), 'mrb9-cli-render-'));
   const repoPath = join(cwd, 'repo');
   const workspacePath = join(cwd, 'workspace');
@@ -137,6 +138,7 @@ test('CLI workflows:render writes project workflow with required handoff paths',
 
   try {
     spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    writeFileSync(join(repoPath, 'WORKFLOW.md'), ['---', 'tracker:', '  kind: linear', '---', '', 'Prompt body.'].join('\n'));
     writeFileSync(configPath, managedProjectYaml(managedProject({ repoPath, workspaceRoot: workspacePath, logsRoot: logsPath })));
 
     const result = spawnSync(process.execPath, ['src/cli/index.ts', 'workflows:render', '--config', configPath], {
@@ -148,10 +150,11 @@ test('CLI workflows:render writes project workflow with required handoff paths',
     assert.equal(result.status, 0, result.stderr);
     const output = JSON.parse(result.stdout);
     assert.equal(output.workflow.projectId, 'meta-orchestrator');
-    assert.match(output.workflow.content, /project_slug: "meta-orchestrator"/);
-    assert.match(output.workflow.content, new RegExp(escapeRegExp(repoPath)));
-    assert.match(output.workflow.content, new RegExp(escapeRegExp(workspacePath)));
-    assert.match(output.workflow.content, new RegExp(escapeRegExp(logsPath)));
+    assert.equal(output.workflow.workflowPath, join(workspacePath, 'WORKFLOW.md'));
+    const frontMatter = parseWorkflowFrontMatter(output.workflow.content);
+    assert.equal(frontMatter.tracker.project_slug, 'meta-orchestrator');
+    assert.equal(frontMatter.workspace.root, workspacePath);
+    assert.equal(frontMatter.hooks.after_create, 'git clone git@github.com:mboogerd/symphony-meta-orchestrator-mcp.git .');
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -166,6 +169,7 @@ test('CLI workflow render then project validate covers local registry smoke path
 
   try {
     spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    writeFileSync(join(repoPath, 'WORKFLOW.md'), ['---', 'tracker:', '  kind: linear', '---', '', 'Prompt body.'].join('\n'));
     writeFileSync(configPath, managedProjectYaml(managedProject({ repoPath, workspaceRoot: workspacePath, logsRoot: logsPath })));
 
     const render = spawnSync(process.execPath, ['src/cli/index.ts', 'workflow', 'render', '--config', configPath], {
@@ -195,6 +199,7 @@ test('CLI runner start status stop covers local runner smoke path', () => {
 
   try {
     spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    writeFileSync(join(repoPath, 'WORKFLOW.md'), ['---', 'tracker:', '  kind: linear', '---', '', 'Prompt body.'].join('\n'));
     writeFileSync(runnerPath, [
       '#!/usr/bin/env node',
       'setInterval(() => {}, 1000);'
@@ -236,6 +241,8 @@ test('CLI runner start status stop covers local runner smoke path', () => {
   }
 });
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function parseWorkflowFrontMatter(content: string): Record<string, any> {
+  const endIndex = content.indexOf('\n---\n', 4);
+  assert.notEqual(endIndex, -1);
+  return YAML.parse(content.slice(4, endIndex)) as Record<string, any>;
 }

@@ -158,6 +158,7 @@ test('MCP smoke registers project, renders workflow, and validates setup', async
   try {
     mkdirSync(repoPath, { recursive: true });
     mkdirSync(join(repoPath, '.git'), { recursive: true });
+    writeFileSync(join(repoPath, 'WORKFLOW.md'), ['---', 'tracker:', '  kind: linear', '---', '', 'Prompt body.'].join('\n'));
     const runtime = createRuntimeConfig({ env: {}, argv: ['--config', configPath], cwd: process.cwd() });
 
     const registered = await handleMcpMessage({
@@ -175,7 +176,7 @@ test('MCP smoke registers project, renders workflow, and validates setup', async
       params: { name: 'generate_workflow', arguments: { projectId: 'meta-orchestrator' } }
     }, runtime);
     const workflow = (((rendered?.result as Record<string, unknown>).structuredContent as Record<string, unknown>).workflow as Record<string, unknown>);
-    assert.equal(workflow.workflowPath, join(repoPath, 'WORKFLOW.md'));
+    assert.equal(workflow.workflowPath, join(workspacePath, 'WORKFLOW.md'));
 
     const validated = await handleMcpMessage({
       jsonrpc: '2.0',
