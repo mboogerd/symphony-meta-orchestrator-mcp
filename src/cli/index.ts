@@ -3,6 +3,7 @@ import { pathToFileURL } from 'node:url';
 import { createRuntimeConfig } from '../config/runtime.ts';
 import { createLogger } from '../logging/logger.ts';
 import { packageInfo } from '../package-info.ts';
+import { createProjectRegistryService, ProjectRegistryValidationError } from '../services/registry/index.ts';
 
 export async function runCli(
   argv: string[] = process.argv.slice(2),
@@ -47,6 +48,28 @@ export async function runCli(
     return 0;
   }
 
+  if (command === 'projects:list') {
+    try {
+      const projects = await createProjectRegistryService(runtime.configPath).list();
+      stdout.write(`${JSON.stringify({ projects }, null, 2)}\n`);
+      return 0;
+    } catch (error) {
+      stderr.write(`${formatError(error)}\n`);
+      return 1;
+    }
+  }
+
+  if (command === 'projects:validate') {
+    try {
+      await createProjectRegistryService(runtime.configPath).load();
+      stdout.write(`${JSON.stringify({ status: 'ok', configPath: runtime.configPath }, null, 2)}\n`);
+      return 0;
+    } catch (error) {
+      stderr.write(`${formatError(error)}\n`);
+      return 1;
+    }
+  }
+
   stderr.write(`Unknown command: ${command}\n\n${helpText()}`);
   return 1;
 }
@@ -76,6 +99,8 @@ function helpText(): string {
     '',
     'Commands:',
     '  health     Print runtime health information',
+    '  projects:list      List managed projects from the registry',
+    '  projects:validate  Validate the managed-project registry',
     '  version    Print package name and version',
     '',
     'Options:',
@@ -84,6 +109,14 @@ function helpText(): string {
     '  -h, --help                     Print this help text',
     ''
   ].join('\n');
+}
+
+function formatError(error: unknown): string {
+  if (error instanceof ProjectRegistryValidationError) {
+    return error.message;
+  }
+
+  return error instanceof Error ? error.message : String(error);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

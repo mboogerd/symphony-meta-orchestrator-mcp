@@ -3,3 +3,12 @@ export { loadEnvironment, parseDotEnv } from './config/env.ts';
 export { createLogger } from './logging/logger.ts';
 export { handleMcpMessage } from './mcp/protocol.ts';
 export { packageInfo } from './package-info.ts';
+export {
+  createEmptyRegistry,
+  createProjectRegistryService,
+  loadRegistry,
+  ProjectRegistryValidationError,
+  saveRegistry,
+  validateProjectRegistry
+} from './services/registry/index.ts';
+export type { ManagedProject, ManagedProjectRegistry } from './services/registry/index.ts';

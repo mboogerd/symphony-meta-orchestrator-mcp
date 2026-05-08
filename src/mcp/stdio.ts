@@ -38,7 +38,7 @@ export async function startMcpStdio(options: McpStdioOptions = {}): Promise<void
     }
 
     try {
-      const response = handleMcpMessage(JSON.parse(trimmed), runtime);
+      const response = await handleMcpMessage(JSON.parse(trimmed), runtime);
 
       if (response !== undefined) {
         output.write(`${JSON.stringify(response)}\n`);
