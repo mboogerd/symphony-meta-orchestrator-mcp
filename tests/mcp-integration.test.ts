@@ -76,6 +76,8 @@ test('MCP integration creates planned Backlog issues and Linear dependencies wit
       'createIssue',
       'workflowStates',
       'createIssue',
+      'issue',
+      'issue',
       'createIssueRelation'
     ]);
     assert.equal(calls[0].input.filter.name.eq, 'Backlog');
@@ -83,7 +85,7 @@ test('MCP integration creates planned Backlog issues and Linear dependencies wit
     assert.equal(calls[1].input.projectId, fixture.project.tracker.projectId);
     assert.equal(calls[2].input.filter.name.eq, 'Backlog');
     assert.equal(calls[3].input.stateId, 'state-backlog');
-    assert.deepEqual(calls[4].input, {
+    assert.deepEqual(calls[6].input, {
       issueId: 'issue-1',
       relatedIssueId: 'issue-2',
       type: 'blocks'
@@ -284,6 +286,16 @@ function runnerStatus(project: ManagedProject, state: 'running' | 'stopped') {
 function mockLinearClient(calls: Array<{ method: string; input: Record<string, unknown> }>): LinearSdkClient {
   let nextIssue = 1;
   return {
+    async issue(id) {
+      calls.push({ method: 'issue', input: { id } });
+      return {
+        id,
+        identifier: id === 'issue-1' ? 'MRB-1' : 'MRB-2',
+        url: `https://linear.example/${id}`,
+        team: { id: 'linear-team-id', key: 'MRB', name: 'MRB' },
+        project: { id: 'linear-project-id', name: 'Meta Orchestrator' }
+      };
+    },
     async createProject(input) {
       calls.push({ method: 'createProject', input });
       return { project: { id: 'project-id', name: String(input.name), slugId: 'project-slug', url: 'https://linear.example/project' } };
