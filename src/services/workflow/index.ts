@@ -1,5 +1,5 @@
 import { access, mkdir, stat, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import type { ManagedProject } from '../registry/index.ts';
 
 export type WorkflowState = 'backlog' | 'todo' | 'in_progress' | 'in_review' | 'done';
@@ -45,9 +45,11 @@ export type WorkflowSetupValidation = {
 
 export async function renderProjectWorkflow(project: ManagedProject): Promise<WorkflowRenderResult> {
   const repoPath = resolve(project.repo.path);
-  const workspaceRoot = resolve(project.symphony.workspacePath);
-  const logsRoot = resolve(project.symphony.logsPath ?? join(project.symphony.workspacePath, 'logs'));
-  const workflowPath = join(workspaceRoot, 'WORKFLOW.md');
+  const workspaceRoot = resolve(project.symphony.workspaceRoot);
+  const logsRoot = resolve(project.symphony.logsRoot);
+  const workflowPath = project.workflow.source === 'repo'
+    ? resolve(repoPath, project.workflow.path)
+    : join(workspaceRoot, 'WORKFLOW.md');
 
   const content = [
     '# Symphony Project Workflow',
@@ -58,15 +60,22 @@ export async function renderProjectWorkflow(project: ManagedProject): Promise<Wo
     `project_slug: ${quoteYaml(project.id)}`,
     `project_name: ${quoteYaml(project.name)}`,
     `local_repo_path: ${quoteYaml(repoPath)}`,
+    `repo_clone_source: ${quoteYaml(project.repo.cloneSource)}`,
+    `default_branch: ${quoteYaml(project.repo.defaultBranch)}`,
     `workspace_root: ${quoteYaml(workspaceRoot)}`,
     `logs_root: ${quoteYaml(logsRoot)}`,
     'linear:',
-    `  team_key: ${quoteYaml(project.linear.teamKey)}`,
-    project.linear.projectId ? `  project_id: ${quoteYaml(project.linear.projectId)}` : undefined,
-    project.linear.projectKey ? `  project_key: ${quoteYaml(project.linear.projectKey)}` : undefined,
+    `  team_key: ${quoteYaml(project.tracker.teamKey)}`,
+    `  team_id: ${quoteYaml(project.tracker.teamId)}`,
+    `  project_id: ${quoteYaml(project.tracker.projectId)}`,
+    `  project_slug: ${quoteYaml(project.tracker.projectSlug)}`,
     'symphony:',
-    `  mcp_port: ${project.symphony.mcpPort}`,
-    project.symphony.runnerPort ? `  runner_port: ${project.symphony.runnerPort}` : undefined,
+    `  command: ${quoteYaml(project.symphony.command)}`,
+    `  runner_port: ${project.symphony.runnerPort}`,
+    project.symphony.dashboardUrl ? `  dashboard_url: ${quoteYaml(project.symphony.dashboardUrl)}` : undefined,
+    'codex:',
+    `  thread_sandbox: ${quoteYaml(project.codex.threadSandbox)}`,
+    `  turn_sandbox: ${quoteYaml(project.codex.turnSandbox)}`,
     '```',
     '',
     '## Runner Handoff',
@@ -97,9 +106,11 @@ export async function validateProjectWorkflowSetup(project: ManagedProject): Pro
   }
 
   const repoPath = workflow?.repoPath ?? resolve(project.repo.path);
-  const workspaceRoot = workflow?.workspaceRoot ?? resolve(project.symphony.workspacePath);
-  const logsRoot = workflow?.logsRoot ?? resolve(project.symphony.logsPath ?? join(project.symphony.workspacePath, 'logs'));
-  const workflowPath = workflow?.workflowPath ?? join(workspaceRoot, 'WORKFLOW.md');
+  const workspaceRoot = workflow?.workspaceRoot ?? resolve(project.symphony.workspaceRoot);
+  const logsRoot = workflow?.logsRoot ?? resolve(project.symphony.logsRoot);
+  const workflowPath = workflow?.workflowPath ?? (
+    project.workflow.source === 'repo' ? resolve(project.repo.path, project.workflow.path) : join(workspaceRoot, 'WORKFLOW.md')
+  );
 
   await validateRepoPath(repoPath, issues);
   await validateWritableDirectory(workspaceRoot, 'workspaceRoot', 'workspace_root_unavailable', issues);
@@ -130,6 +141,7 @@ export async function writeProjectWorkflow(project: ManagedProject): Promise<Wor
 
   await mkdir(validation.workspaceRoot, { recursive: true });
   await mkdir(validation.logsRoot, { recursive: true });
+  await mkdir(dirname(validation.workflowPath), { recursive: true });
   await writeFile(validation.workflowPath, validation.workflow.content, 'utf8');
   return validation.workflow;
 }

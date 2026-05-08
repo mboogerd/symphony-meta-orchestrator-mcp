@@ -4,45 +4,75 @@ import YAML from 'yaml';
 import { z } from 'zod';
 
 export type ManagedProjectRegistry = {
-  version: 1;
+  version: 2;
   projects: ManagedProject[];
 };
 
 export type ManagedProject = {
   id: string;
   name: string;
-  linear: LinearProjectConfig;
+  tracker: TrackerProjectConfig;
   repo: RepositoryConfig;
+  workflow: WorkflowConfig;
   symphony: SymphonyProjectConfig;
+  codex: CodexPolicyConfig;
 };
 
-export type LinearProjectConfig = {
+export type TrackerProjectConfig = {
+  kind: 'linear';
   teamKey: string;
-  projectId?: string;
-  projectKey?: string;
+  teamId: string;
+  projectId: string;
+  projectSlug: string;
 };
 
 export type RepositoryConfig = {
   path: string;
-  remote?: string;
-  branch?: string;
+  remoteUrl: string;
+  defaultBranch: string;
+  cloneSource: string;
+};
+
+export type WorkflowConfig =
+  | {
+      source: 'repo';
+      path: string;
+    }
+  | {
+      source: 'generated';
+      template: string;
+    };
+
+export type CodexSandboxPolicy = 'read-only' | 'workspace-write' | 'danger-full-access';
+
+export type CodexPolicyConfig = {
+  threadSandbox: CodexSandboxPolicy;
+  turnSandbox: CodexSandboxPolicy;
 };
 
 export type SymphonyProjectConfig = {
-  workspacePath: string;
-  logsPath?: string;
-  mcpPort: number;
-  runnerPort?: number;
+  command: string;
+  runnerPort: number;
+  workspaceRoot: string;
+  logsRoot: string;
+  dashboardUrl?: string;
 };
 
 export type ProjectRegistry = ManagedProjectRegistry;
 export type RegistryProject = ManagedProject;
+export type ManagedProjectPatch = Partial<Omit<ManagedProject, 'tracker' | 'repo' | 'workflow' | 'symphony' | 'codex'>> & {
+  tracker?: Partial<TrackerProjectConfig>;
+  repo?: Partial<RepositoryConfig>;
+  workflow?: Partial<WorkflowConfig>;
+  symphony?: Partial<SymphonyProjectConfig>;
+  codex?: Partial<CodexPolicyConfig>;
+};
 
 export type ProjectRegistryService = {
   create(project: ManagedProject): Promise<ManagedProject>;
   load(): Promise<ManagedProjectRegistry>;
   list(): Promise<ManagedProject[]>;
-  update(projectId: string, patch: Partial<ManagedProject>): Promise<ManagedProject>;
+  update(projectId: string, patch: ManagedProjectPatch): Promise<ManagedProject>;
   validate(registry: ManagedProjectRegistry): void;
 };
 
@@ -58,37 +88,54 @@ export class ProjectRegistryValidationError extends Error {
 
 const nonEmptyString = z.string().trim().min(1, 'expected a non-empty string');
 const port = z.number().int().min(1).max(65535);
+const sandboxPolicy = z.enum(['read-only', 'workspace-write', 'danger-full-access']);
 
 export const managedProjectSchema = z.object({
   id: nonEmptyString,
   name: nonEmptyString,
-  linear: z.object({
+  tracker: z.object({
+    kind: z.literal('linear'),
     teamKey: nonEmptyString,
-    projectId: nonEmptyString.optional(),
-    projectKey: nonEmptyString.optional()
-  }).strict().refine((value) => value.projectId !== undefined || value.projectKey !== undefined, {
-    message: 'expected projectId or projectKey'
-  }),
+    teamId: nonEmptyString,
+    projectId: nonEmptyString,
+    projectSlug: nonEmptyString
+  }).strict(),
   repo: z.object({
     path: nonEmptyString,
-    remote: nonEmptyString.optional(),
-    branch: nonEmptyString.optional()
+    remoteUrl: nonEmptyString,
+    defaultBranch: nonEmptyString,
+    cloneSource: nonEmptyString
   }).strict(),
+  workflow: z.discriminatedUnion('source', [
+    z.object({
+      source: z.literal('repo'),
+      path: nonEmptyString
+    }).strict(),
+    z.object({
+      source: z.literal('generated'),
+      template: nonEmptyString
+    }).strict()
+  ]),
   symphony: z.object({
-    workspacePath: nonEmptyString,
-    logsPath: nonEmptyString.optional(),
-    mcpPort: port,
-    runnerPort: port.optional()
+    command: nonEmptyString,
+    runnerPort: port,
+    workspaceRoot: nonEmptyString,
+    logsRoot: nonEmptyString,
+    dashboardUrl: nonEmptyString.optional()
+  }).strict(),
+  codex: z.object({
+    threadSandbox: sandboxPolicy,
+    turnSandbox: sandboxPolicy
   }).strict()
 }).strict();
 
 export const managedProjectRegistrySchema = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
   projects: z.array(managedProjectSchema)
 }).strict();
 
 export function createEmptyRegistry(): ManagedProjectRegistry {
-  return { version: 1, projects: [] };
+  return { version: 2, projects: [] };
 }
 
 export function createProjectRegistryService(configPath: string): ProjectRegistryService {
@@ -111,7 +158,7 @@ export function createProjectRegistryService(configPath: string): ProjectRegistr
       return (await loadRegistry(registryPath)).projects;
     },
 
-    async update(projectId: string, patch: Partial<ManagedProject>): Promise<ManagedProject> {
+    async update(projectId: string, patch: ManagedProjectPatch): Promise<ManagedProject> {
       const registry = await loadRegistry(registryPath);
       const projectIndex = registry.projects.findIndex((project) => project.id === projectId);
 
@@ -232,13 +279,13 @@ function validateProjects(projects: unknown[], issues: string[]): void {
       addStringCollision(projectIds, id, index, `${prefix}.id`, 'project id', issues);
     }
 
-    validateLinear(project.linear, prefix, index, linearIdentities, issues);
+    validateTracker(project.tracker, prefix, index, linearIdentities, issues);
     validateRepo(project.repo, prefix, index, repoPaths, issues);
     validateSymphony(project.symphony, prefix, index, workspacePaths, ports, issues);
   });
 }
 
-function validateLinear(
+function validateTracker(
   value: unknown,
   prefix: string,
   projectIndex: number,
@@ -246,21 +293,21 @@ function validateLinear(
   issues: string[]
 ): void {
   if (!isRecord(value)) {
-    issues.push(`${prefix}.linear: expected an object`);
+    issues.push(`${prefix}.tracker: expected an object`);
     return;
   }
 
-  const teamKey = readRequiredString(value.teamKey, `${prefix}.linear.teamKey`, issues);
-  const projectId = readOptionalString(value.projectId, `${prefix}.linear.projectId`, issues);
-  const projectKey = readOptionalString(value.projectKey, `${prefix}.linear.projectKey`, issues);
-
-  if (teamKey !== undefined && projectId === undefined && projectKey === undefined) {
-    issues.push(`${prefix}.linear: expected projectId or projectKey`);
+  if (value.kind !== 'linear') {
+    issues.push(`${prefix}.tracker.kind: expected "linear"`);
   }
+  const teamKey = readRequiredString(value.teamKey, `${prefix}.tracker.teamKey`, issues);
+  const teamId = readRequiredString(value.teamId, `${prefix}.tracker.teamId`, issues);
+  const projectId = readRequiredString(value.projectId, `${prefix}.tracker.projectId`, issues);
+  readRequiredString(value.projectSlug, `${prefix}.tracker.projectSlug`, issues);
 
-  if (teamKey !== undefined && (projectId !== undefined || projectKey !== undefined)) {
-    const identity = `${teamKey}:${projectId ?? projectKey}`;
-    addStringCollision(linearIdentities, identity, projectIndex, `${prefix}.linear`, 'Linear identity', issues);
+  if (teamKey !== undefined && teamId !== undefined && projectId !== undefined) {
+    const identity = `${teamKey}:${teamId}:${projectId}`;
+    addStringCollision(linearIdentities, identity, projectIndex, `${prefix}.tracker`, 'Linear identity', issues);
   }
 }
 
@@ -277,8 +324,9 @@ function validateRepo(
   }
 
   const repoPath = readRequiredString(value.path, `${prefix}.repo.path`, issues);
-  readOptionalString(value.remote, `${prefix}.repo.remote`, issues);
-  readOptionalString(value.branch, `${prefix}.repo.branch`, issues);
+  readRequiredString(value.remoteUrl, `${prefix}.repo.remoteUrl`, issues);
+  readRequiredString(value.defaultBranch, `${prefix}.repo.defaultBranch`, issues);
+  readRequiredString(value.cloneSource, `${prefix}.repo.cloneSource`, issues);
 
   if (repoPath !== undefined) {
     addStringCollision(repoPaths, resolve(repoPath), projectIndex, `${prefix}.repo.path`, 'repo path', issues);
@@ -298,24 +346,20 @@ function validateSymphony(
     return;
   }
 
-  const workspacePath = readRequiredString(value.workspacePath, `${prefix}.symphony.workspacePath`, issues);
-  readOptionalString(value.logsPath, `${prefix}.symphony.logsPath`, issues);
-  const mcpPort = readRequiredPort(value.mcpPort, `${prefix}.symphony.mcpPort`, issues);
-  const runnerPort = readOptionalPort(value.runnerPort, `${prefix}.symphony.runnerPort`, issues);
+  readRequiredString(value.command, `${prefix}.symphony.command`, issues);
+  const workspacePath = readRequiredString(value.workspaceRoot, `${prefix}.symphony.workspaceRoot`, issues);
+  readRequiredString(value.logsRoot, `${prefix}.symphony.logsRoot`, issues);
+  const runnerPort = readRequiredPort(value.runnerPort, `${prefix}.symphony.runnerPort`, issues);
 
   if (workspacePath !== undefined) {
     addStringCollision(
       workspacePaths,
       resolve(workspacePath),
       projectIndex,
-      `${prefix}.symphony.workspacePath`,
-      'workspace path',
+      `${prefix}.symphony.workspaceRoot`,
+      'workspace root',
       issues
     );
-  }
-
-  if (mcpPort !== undefined) {
-    addPortCollision(ports, mcpPort, `${prefix}.symphony.mcpPort`, issues);
   }
 
   if (runnerPort !== undefined) {
@@ -323,13 +367,15 @@ function validateSymphony(
   }
 }
 
-function mergeProject(existing: ManagedProject, patch: Partial<ManagedProject>): ManagedProject {
+function mergeProject(existing: ManagedProject, patch: ManagedProjectPatch): ManagedProject {
   return {
     ...existing,
     ...patch,
-    linear: { ...existing.linear, ...patch.linear },
+    tracker: { ...existing.tracker, ...patch.tracker },
     repo: { ...existing.repo, ...patch.repo },
-    symphony: { ...existing.symphony, ...patch.symphony }
+    workflow: { ...existing.workflow, ...patch.workflow } as WorkflowConfig,
+    symphony: { ...existing.symphony, ...patch.symphony },
+    codex: { ...existing.codex, ...patch.codex }
   };
 }
 

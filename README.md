@@ -48,21 +48,33 @@ launch a known local command instead of the default Symphony package.
 Managed projects are stored as YAML runtime files:
 
 ```yaml
-version: 1
+version: 2
 projects:
   - id: meta-orchestrator
     name: Meta Orchestrator
-    linear:
+    tracker:
+      kind: linear
       teamKey: MRB
-      projectKey: META
+      teamId: linear-team-id
+      projectId: linear-project-id
+      projectSlug: meta-orchestrator
     repo:
       path: /path/to/repository
-      remote: https://github.com/example/repository.git
-      branch: main
+      remoteUrl: https://github.com/example/repository.git
+      defaultBranch: main
+      cloneSource: git@github.com:example/repository.git
+    workflow:
+      source: repo
+      path: WORKFLOW.md
     symphony:
-      workspacePath: /path/to/workspace
-      mcpPort: 4100
+      command: npx --yes symphony
       runnerPort: 4101
+      workspaceRoot: /path/to/workspace
+      logsRoot: /path/to/logs
+      dashboardUrl: http://localhost:4101
+    codex:
+      threadSandbox: workspace-write
+      turnSandbox: workspace-write
 ```
 
 The CLI exposes health, version, and registry list/validate commands. The MCP

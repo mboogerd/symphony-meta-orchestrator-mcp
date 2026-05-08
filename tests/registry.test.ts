@@ -13,19 +13,32 @@ import {
 const baseProject: ManagedProject = {
   id: 'meta-orchestrator',
   name: 'Meta Orchestrator',
-  linear: {
+  tracker: {
+    kind: 'linear',
     teamKey: 'MRB',
-    projectId: 'linear-project-id'
+    teamId: 'linear-team-id',
+    projectId: 'linear-project-id',
+    projectSlug: 'meta-orchestrator'
   },
   repo: {
     path: '/tmp/symphony-meta-orchestrator-mcp',
-    remote: 'https://github.com/mboogerd/symphony-meta-orchestrator-mcp.git',
-    branch: 'main'
+    remoteUrl: 'https://github.com/mboogerd/symphony-meta-orchestrator-mcp.git',
+    defaultBranch: 'main',
+    cloneSource: 'git@github.com:mboogerd/symphony-meta-orchestrator-mcp.git'
+  },
+  workflow: {
+    source: 'repo',
+    path: 'WORKFLOW.md'
   },
   symphony: {
-    workspacePath: '/tmp/symphony-workspaces/meta-orchestrator',
-    mcpPort: 4100,
-    runnerPort: 4101
+    command: 'npx --yes symphony',
+    runnerPort: 4101,
+    workspaceRoot: '/tmp/symphony-workspaces/meta-orchestrator',
+    logsRoot: '/tmp/symphony-logs/meta-orchestrator'
+  },
+  codex: {
+    threadSandbox: 'workspace-write',
+    turnSandbox: 'workspace-write'
   }
 };
 
@@ -37,16 +50,16 @@ test('registry creates, persists, loads, lists, and updates YAML managed project
   try {
     await registry.create(baseProject);
 
-    assert.match(readFileSync(configPath, 'utf8'), /linear:\n\s+teamKey: MRB/);
+    assert.match(readFileSync(configPath, 'utf8'), /tracker:\n\s+kind: linear/);
     assert.deepEqual(await registry.list(), [baseProject]);
 
     const updated = await registry.update(baseProject.id, {
-      symphony: { workspacePath: baseProject.symphony.workspacePath, mcpPort: 4200 }
+      symphony: { runnerPort: 4200 }
     });
 
-    assert.equal(updated.symphony.mcpPort, 4200);
-    assert.equal(updated.symphony.runnerPort, 4101);
-    assert.equal((await registry.load()).projects[0]?.symphony.mcpPort, 4200);
+    assert.equal(updated.symphony.runnerPort, 4200);
+    assert.equal(updated.symphony.workspaceRoot, baseProject.symphony.workspaceRoot);
+    assert.equal((await registry.load()).projects[0]?.symphony.runnerPort, 4200);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -61,14 +74,17 @@ test('registry rejects invalid entries with clear validation errors', async () =
       registry.create({
         ...baseProject,
         id: '',
-        linear: { teamKey: 'MRB' },
-        symphony: { workspacePath: baseProject.symphony.workspacePath, mcpPort: 70000 }
+        tracker: { ...baseProject.tracker, projectSlug: '' },
+        repo: { ...baseProject.repo, cloneSource: '' },
+        symphony: { ...baseProject.symphony, command: '', runnerPort: 70000 }
       }),
       (error) => {
         assert.equal(error instanceof ProjectRegistryValidationError, true);
         assert.match((error as Error).message, /projects\[0\]\.id: expected a non-empty string/);
-        assert.match((error as Error).message, /projects\[0\]\.linear: expected projectId or projectKey/);
-        assert.match((error as Error).message, /projects\[0\]\.symphony\.mcpPort/);
+        assert.match((error as Error).message, /projects\[0\]\.tracker\.projectSlug/);
+        assert.match((error as Error).message, /projects\[0\]\.repo\.cloneSource/);
+        assert.match((error as Error).message, /projects\[0\]\.symphony\.command/);
+        assert.match((error as Error).message, /projects\[0\]\.symphony\.runnerPort/);
         return true;
       }
     );
@@ -88,17 +104,18 @@ test('registry rejects duplicate identities, ports, and paths deterministically'
       registry.create({
         ...baseProject,
         id: 'duplicate',
-        repo: { path: baseProject.repo.path },
+        repo: { ...baseProject.repo, path: baseProject.repo.path },
         symphony: {
-          workspacePath: baseProject.symphony.workspacePath,
-          mcpPort: baseProject.symphony.runnerPort ?? 4101
+          ...baseProject.symphony,
+          workspaceRoot: baseProject.symphony.workspaceRoot,
+          runnerPort: baseProject.symphony.runnerPort
         }
       }),
       (error) => {
         assert.equal(error instanceof ProjectRegistryValidationError, true);
         assert.match((error as Error).message, /duplicate Linear identity also used by projects\[0\]/);
         assert.match((error as Error).message, /duplicate repo path also used by projects\[0\]/);
-        assert.match((error as Error).message, /duplicate workspace path also used by projects\[0\]/);
+        assert.match((error as Error).message, /duplicate workspace root also used by projects\[0\]/);
         assert.match((error as Error).message, /duplicate port also used by projects\[0\]\.symphony\.runnerPort/);
         return true;
       }

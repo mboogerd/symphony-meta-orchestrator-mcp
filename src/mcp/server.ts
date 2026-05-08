@@ -49,7 +49,7 @@ export function createMcpServer(runtime: RuntimeConfig): McpServer {
       resources: projects.map((project) => ({
         uri: `symphony://projects/${project.id}`,
         name: project.name,
-        description: `${project.linear.teamKey} managed project at ${project.repo.path}`,
+        description: `${project.tracker.teamKey} managed project at ${project.repo.path}`,
         mimeType: 'application/yaml'
       }))
     };

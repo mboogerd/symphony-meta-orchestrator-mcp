@@ -74,7 +74,7 @@ const STOP_TIMEOUT_MS = 5_000;
 export function createRunnerManager(options: RunnerManagerOptions = {}): RunnerManager {
   const now = options.now ?? (() => new Date());
   const spawnProcess = options.spawnProcess ?? spawn;
-  const command = parseCommand(options.command ?? process.env.SYMPHONY_RUNNER_COMMAND ?? DEFAULT_RUNNER_COMMAND, options.commandArgs);
+  const defaultCommand = options.command ?? process.env.SYMPHONY_RUNNER_COMMAND;
 
   return {
     async start(project: ManagedProject): Promise<RunnerStartResult> {
@@ -101,7 +101,7 @@ export function createRunnerManager(options: RunnerManagerOptions = {}): RunnerM
             state: 'invalid',
             port: project.symphony.runnerPort,
             workflowPath: validation.workflowPath,
-            dashboardUrl: dashboardUrl(project.symphony.runnerPort),
+            dashboardUrl: projectDashboardUrl(project),
             logPath: paths.logPath,
             statePath: paths.statePath,
             details: {
@@ -113,13 +113,13 @@ export function createRunnerManager(options: RunnerManagerOptions = {}): RunnerM
       }
 
       const workflow = await writeProjectWorkflow(project);
-      const child = spawnRunner(spawnProcess, command.file, command.args, project, workflow, paths.logPath);
+      const child = spawnRunner(spawnProcess, defaultCommand, options.commandArgs, project, workflow, paths.logPath);
       const state: RunnerStateFile = {
         projectId: project.id,
         pid: requirePid(child),
         port: project.symphony.runnerPort,
         workflowPath: workflow.workflowPath,
-        dashboardUrl: dashboardUrl(project.symphony.runnerPort),
+        dashboardUrl: projectDashboardUrl(project),
         logPath: paths.logPath,
         startedAt: now().toISOString(),
         latestHeartbeat: now().toISOString(),
@@ -235,7 +235,7 @@ export function createIdleRunnerStatus(
     state: 'idle',
     port: projectOrId.symphony.runnerPort,
     workflowPath: resolvedPaths.workflowPath,
-    dashboardUrl: dashboardUrl(projectOrId.symphony.runnerPort),
+    dashboardUrl: projectDashboardUrl(projectOrId),
     logPath: resolvedPaths.logPath,
     statePath: resolvedPaths.statePath,
     details: { message, checkedAt }
@@ -243,8 +243,8 @@ export function createIdleRunnerStatus(
 }
 
 function runnerPaths(project: ManagedProject) {
-  const workspaceRoot = resolve(project.symphony.workspacePath);
-  const logsRoot = resolve(project.symphony.logsPath ?? join(project.symphony.workspacePath, 'logs'));
+  const workspaceRoot = resolve(project.symphony.workspaceRoot);
+  const logsRoot = resolve(project.symphony.logsRoot);
   return {
     workspaceRoot,
     logsRoot,
@@ -256,27 +256,29 @@ function runnerPaths(project: ManagedProject) {
 
 function spawnRunner(
   spawnProcess: typeof spawn,
-  command: string,
-  commandArgs: string[],
+  command: string | undefined,
+  commandArgs: string[] | undefined,
   project: ManagedProject,
   workflow: WorkflowRenderResult,
   logPath: string
 ): ChildProcess {
+  const parsedCommand = parseCommand(command ?? project.symphony.command, commandArgs);
   const args = [
     '--workflow',
     workflow.workflowPath,
-    ...(project.symphony.runnerPort === undefined ? [] : ['--port', String(project.symphony.runnerPort)])
+    '--port',
+    String(project.symphony.runnerPort)
   ];
 
-  const child = spawnProcess(command, [...commandArgs, ...args], {
+  const child = spawnProcess(parsedCommand.file, [...parsedCommand.args, ...args], {
     cwd: workflow.workspaceRoot,
     detached: true,
     stdio: ['ignore', openLogFd(logPath), openLogFd(logPath)],
     env: {
       ...process.env,
       SYMPHONY_WORKFLOW_PATH: workflow.workflowPath,
-      SYMPHONY_RUNNER_PORT: project.symphony.runnerPort === undefined ? undefined : String(project.symphony.runnerPort),
-      SYMPHONY_DASHBOARD_URL: dashboardUrl(project.symphony.runnerPort)
+      SYMPHONY_RUNNER_PORT: String(project.symphony.runnerPort),
+      SYMPHONY_DASHBOARD_URL: projectDashboardUrl(project)
     }
   });
   child.unref();
@@ -371,7 +373,7 @@ function statusFromState(
     pid: state.pid,
     port: state.port ?? project.symphony.runnerPort,
     workflowPath: state.workflowPath || paths.workflowPath,
-    dashboardUrl: state.dashboardUrl ?? dashboardUrl(project.symphony.runnerPort),
+    dashboardUrl: state.dashboardUrl ?? projectDashboardUrl(project),
     logPath: state.logPath || paths.logPath,
     statePath: paths.statePath,
     latestHeartbeat: state.latestHeartbeat,
@@ -423,6 +425,10 @@ function isProcessAlive(pid: number): boolean {
 
 function dashboardUrl(port: number | undefined): string | undefined {
   return port === undefined ? undefined : `http://localhost:${port}`;
+}
+
+function projectDashboardUrl(project: ManagedProject): string | undefined {
+  return project.symphony.dashboardUrl ?? dashboardUrl(project.symphony.runnerPort);
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
