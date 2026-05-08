@@ -27,7 +27,17 @@ const linearIssueSchema = {
   stateId: optionalString,
   stateName: optionalString,
   assigneeId: optionalString,
-  priority: z.number().int().min(0).max(4).optional()
+  priority: z.number().int().min(0).max(4).optional(),
+  labelIds: z.array(requiredString).optional()
+};
+const projectIssueSchema = {
+  title: requiredString,
+  description: optionalString,
+  stateId: optionalString,
+  stateName: optionalString,
+  assigneeId: optionalString,
+  priority: z.number().int().min(0).max(4).optional(),
+  labelIds: z.array(requiredString).optional()
 };
 
 export function createMcpServer(runtime: RuntimeConfig): McpServer {
@@ -122,6 +132,38 @@ function registerTools(server: McpServer, runtime: RuntimeConfig): void {
     inputSchema: { issueId: requiredString, stateNameOrId: requiredString, teamId: optionalString }
   }, async ({ issueId, stateNameOrId, teamId }) => withToolErrors(async () => toolResult({
     issue: await linear(runtime).moveIssueToState(issueId, stateNameOrId, teamId)
+  })));
+
+  server.registerTool('create_project_issue', {
+    description: 'Create one issue in a managed Linear project using registry defaults.',
+    inputSchema: { projectId: requiredString, ...projectIssueSchema }
+  }, async ({ projectId, ...issue }) => withToolErrors(async () => toolResult({
+    issue: await linear(runtime).createProjectIssue(await requireProject(runtime, projectId), issue)
+  })));
+
+  server.registerTool('create_planned_issue_batch', {
+    description: 'Create multiple planned issues in a managed Linear project and link dependencies by stable client keys.',
+    inputSchema: {
+      projectId: requiredString,
+      issues: z.array(z.object({ key: requiredString, ...projectIssueSchema }).strict()),
+      dependencies: z.array(z.object({ from: requiredString, blocks: requiredString }).strict()).optional()
+    }
+  }, async ({ projectId, issues, dependencies }) => withToolErrors(async () => toolResult({
+    batch: await linear(runtime).createPlannedIssueBatch(await requireProject(runtime, projectId), { issues, dependencies })
+  })));
+
+  server.registerTool('promote_ready_issue', {
+    description: 'Explicitly move a managed-project issue from Backlog to Todo.',
+    inputSchema: { projectId: requiredString, issueId: requiredString }
+  }, async ({ projectId, issueId }) => withToolErrors(async () => toolResult({
+    issue: await linear(runtime).promoteReadyIssue(await requireProject(runtime, projectId), issueId)
+  })));
+
+  server.registerTool('link_project_issue_dependency', {
+    description: 'Link two issues in a managed Linear project with a blocking dependency.',
+    inputSchema: { projectId: requiredString, blockingIssueId: requiredString, blockedIssueId: requiredString }
+  }, async ({ projectId, blockingIssueId, blockedIssueId }) => withToolErrors(async () => toolResult({
+    dependency: await linear(runtime).linkProjectIssueDependency(await requireProject(runtime, projectId), { blockingIssueId, blockedIssueId })
   })));
 
   for (const name of ['start_runner', 'stop_runner', 'restart_runner', 'get_runner_status'] as const) {

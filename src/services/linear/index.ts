@@ -1,4 +1,5 @@
 import { IssueRelationType, LinearClient } from '@linear/sdk';
+import type { ManagedProject } from '../registry/index.ts';
 
 export type LinearIssueReference = {
   id?: string;
@@ -37,6 +38,7 @@ export type CreateLinearIssueInput = {
   stateName?: string;
   assigneeId?: string;
   priority?: number;
+  labelIds?: string[];
 };
 
 export type CreateLinearIssueBatchInput = {
@@ -46,6 +48,48 @@ export type CreateLinearIssueBatchInput = {
 export type CreateLinearDependencyInput = {
   blockingIssueId: string;
   blockedIssueId: string;
+};
+
+export type CreateProjectIssueInput = Omit<CreateLinearIssueInput, 'teamId' | 'teamKey' | 'projectId'>;
+
+export type PlannedIssueInput = CreateProjectIssueInput & {
+  key: string;
+};
+
+export type PlannedIssueDependencyInput = {
+  from: string;
+  blocks: string;
+};
+
+export type CreatePlannedIssueBatchInput = {
+  issues: PlannedIssueInput[];
+  dependencies?: PlannedIssueDependencyInput[];
+};
+
+export type PlannedIssueResult = {
+  key: string;
+  issue: LinearIssueReference;
+};
+
+export type PlannedIssueDependencyResult = PlannedIssueDependencyInput & {
+  dependency: {
+    id: string;
+    type: string;
+  };
+};
+
+export type PlannedIssueBatchResult = {
+  issues: PlannedIssueResult[];
+  dependencies: PlannedIssueDependencyResult[];
+};
+
+export type PlannedIssueBatchPartialResult = PlannedIssueBatchResult & {
+  failed: {
+    phase: 'issue' | 'dependency';
+    key?: string;
+    edge?: PlannedIssueDependencyInput;
+    error: Record<string, unknown>;
+  };
 };
 
 export type LinearServiceOptions = {
@@ -143,7 +187,8 @@ export class LinearService {
         projectId: input.projectId,
         stateId,
         assigneeId: input.assigneeId,
-        priority: input.priority
+        priority: input.priority,
+        labelIds: input.labelIds
       });
       return toIssueReference(requireEntity(payload.issue, 'issue', 'create_issue'));
     });
@@ -161,12 +206,83 @@ export class LinearService {
           projectId: issue.projectId,
           stateId,
           assigneeId: issue.assigneeId,
-          priority: issue.priority
+          priority: issue.priority,
+          labelIds: issue.labelIds
         };
       }));
       const payload = await this.client.createIssueBatch({ issues });
       return requireEntity(payload.issues, 'issues', 'create_issue_batch').map(toIssueReference);
     });
+  }
+
+  async createProjectIssue(project: ManagedProject, input: CreateProjectIssueInput): Promise<LinearIssueReference> {
+    return this.createIssue({
+      ...input,
+      teamId: project.tracker.teamId,
+      projectId: project.tracker.projectId
+    });
+  }
+
+  async createPlannedIssueBatch(project: ManagedProject, input: CreatePlannedIssueBatchInput): Promise<PlannedIssueBatchResult> {
+    const issues: PlannedIssueResult[] = [];
+    const dependencies: PlannedIssueDependencyResult[] = [];
+    const issueIdsByKey = new Map<string, string>();
+
+    for (const issue of input.issues) {
+      if (issueIdsByKey.has(issue.key)) {
+        throw partialBatchError('issue', issues, dependencies, new LinearServiceError(
+          'duplicate_issue_key',
+          'create_planned_issue_batch',
+          `Duplicate issue key "${issue.key}"`,
+          { key: issue.key }
+        ), undefined, issue.key);
+      }
+
+      try {
+        const created = await this.createProjectIssue(project, issue);
+        if (!created.id) {
+          throw new LinearServiceError('missing_issue_id', 'create_planned_issue_batch', `Created issue for key "${issue.key}" did not include an id`, { key: issue.key });
+        }
+
+        issueIdsByKey.set(issue.key, created.id);
+        issues.push({ key: issue.key, issue: created });
+      } catch (error) {
+        throw partialBatchError('issue', issues, dependencies, error, undefined, issue.key);
+      }
+    }
+
+    for (const edge of input.dependencies ?? []) {
+      const blockingIssueId = issueIdsByKey.get(edge.from);
+      const blockedIssueId = issueIdsByKey.get(edge.blocks);
+
+      if (!blockingIssueId || !blockedIssueId) {
+        const missingKeys = [!blockingIssueId ? edge.from : undefined, !blockedIssueId ? edge.blocks : undefined].filter((key): key is string => key !== undefined);
+        throw partialBatchError('dependency', issues, dependencies, new LinearServiceError(
+          'invalid_dependency_key',
+          'create_planned_issue_batch',
+          `Dependency references unknown issue key(s): ${missingKeys.join(', ')}`,
+          { edge, missingKeys }
+        ), edge);
+      }
+
+      try {
+        const dependency = await this.linkProjectIssueDependency(project, { blockingIssueId, blockedIssueId });
+        dependencies.push({ ...edge, dependency });
+      } catch (error) {
+        throw partialBatchError('dependency', issues, dependencies, error, edge);
+      }
+    }
+
+    return { issues, dependencies };
+  }
+
+  async promoteReadyIssue(project: ManagedProject, issueId: string): Promise<LinearIssueReference> {
+    return this.moveIssueToState(issueId, 'Todo', project.tracker.teamId);
+  }
+
+  async linkProjectIssueDependency(project: ManagedProject, input: CreateLinearDependencyInput): Promise<{ id: string; type: string }> {
+    void project;
+    return this.createDependency(input);
   }
 
   async moveIssueToState(issueId: string, stateNameOrId: string, teamId?: string): Promise<LinearIssueReference> {
@@ -261,6 +377,38 @@ function requireString(value: unknown, path: string, operation: string): string 
   }
 
   return value;
+}
+
+function partialBatchError(
+  phase: 'issue' | 'dependency',
+  issues: PlannedIssueResult[],
+  dependencies: PlannedIssueDependencyResult[],
+  error: unknown,
+  edge?: PlannedIssueDependencyInput,
+  key?: string
+): LinearServiceError {
+  const structuredError = error instanceof LinearServiceError
+    ? error.toJSON()
+    : { name: error instanceof Error ? error.name : 'Error', message: error instanceof Error ? error.message : String(error) };
+
+  return new LinearServiceError(
+    'planned_issue_batch_partial_failure',
+    'create_planned_issue_batch',
+    `Failed to create planned issue batch during ${phase} creation`,
+    {
+      partial: {
+        issues,
+        dependencies,
+        failed: {
+          phase,
+          key,
+          edge,
+          error: structuredError
+        }
+      } satisfies PlannedIssueBatchPartialResult
+    },
+    error
+  );
 }
 
 function isUuidLike(value: string): boolean {

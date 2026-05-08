@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createLinearService, LinearServiceError, type LinearSdkClient } from '../src/services/linear/index.ts';
+import { managedProject } from './project-fixtures.ts';
+
+const projectFixture = () => managedProject({ repoPath: '/tmp/repo', workspaceRoot: '/tmp/workspace' });
 
 function fakeClient(overrides: Partial<LinearSdkClient> = {}): LinearSdkClient {
   return {
@@ -105,6 +108,110 @@ test('Linear service creates issue batches with resolved Backlog states', async 
 
   assert.deepEqual(issues.map((issue) => issue.identifier), ['MRB-1', 'MRB-2']);
   assert.deepEqual((batches[0]?.issues as Array<Record<string, unknown>>).map((issue) => issue.stateId), ['state-backlog', 'state-backlog']);
+});
+
+test('Linear service creates project issues using managed project defaults', async () => {
+  const created: Record<string, unknown>[] = [];
+  const service = createLinearService({
+    client: fakeClient({
+      async createIssue(input) {
+        created.push(input);
+        return { issue: { id: 'issue-1', identifier: 'MRB-1', url: 'https://linear.app/acme/issue/MRB-1/test' } };
+      }
+    })
+  });
+
+  await service.createProjectIssue(projectFixture(), { title: 'managed issue', priority: 2, labelIds: ['label-1'] });
+
+  assert.equal(created[0]?.teamId, 'linear-team-id');
+  assert.equal(created[0]?.projectId, 'linear-project-id');
+  assert.equal(created[0]?.stateId, 'state-backlog');
+  assert.equal(created[0]?.priority, 2);
+  assert.deepEqual(created[0]?.labelIds, ['label-1']);
+});
+
+test('Linear service creates planned issue batch and dependencies by stable keys', async () => {
+  const created: Record<string, unknown>[] = [];
+  const relations: Record<string, unknown>[] = [];
+  const service = createLinearService({
+    client: fakeClient({
+      async createIssue(input) {
+        created.push(input);
+        const index = created.length;
+        return { issue: { id: `issue-${index}`, identifier: `MRB-${index}`, url: `https://linear.app/acme/issue/MRB-${index}/test` } };
+      },
+      async createIssueRelation(input) {
+        relations.push(input);
+        return { relation: { id: `relation-${relations.length}`, type: 'blocks' } };
+      },
+      async workflowStates(variables) {
+        const filter = variables?.filter as { name?: { eq?: string } };
+        return { nodes: [{ id: `state-${filter.name?.eq ?? 'unknown'}`, name: filter.name?.eq ?? 'unknown' }] };
+      }
+    })
+  });
+
+  const batch = await service.createPlannedIssueBatch(projectFixture(), {
+    issues: [
+      { key: 'api', title: 'Build API' },
+      { key: 'ui', title: 'Build UI', stateName: 'Todo' }
+    ],
+    dependencies: [{ from: 'api', blocks: 'ui' }]
+  });
+
+  assert.deepEqual(batch.issues.map((issue) => issue.key), ['api', 'ui']);
+  assert.deepEqual(created.map((issue) => issue.stateId), ['state-Backlog', 'state-Todo']);
+  assert.deepEqual(created.map((issue) => issue.projectId), ['linear-project-id', 'linear-project-id']);
+  assert.deepEqual(relations[0], { issueId: 'issue-1', relatedIssueId: 'issue-2', type: 'blocks' });
+  assert.deepEqual(batch.dependencies, [{ from: 'api', blocks: 'ui', dependency: { id: 'relation-1', type: 'blocks' } }]);
+});
+
+test('Linear service returns partial batch output for invalid dependency keys', async () => {
+  const service = createLinearService({
+    client: fakeClient({
+      async createIssue(input) {
+        return { issue: { id: `issue-${input.title}`, identifier: `MRB-${input.title}`, url: `https://linear.app/acme/issue/MRB-${input.title}/test` } };
+      }
+    })
+  });
+
+  await assert.rejects(
+    service.createPlannedIssueBatch(projectFixture(), {
+      issues: [{ key: 'api', title: '1' }],
+      dependencies: [{ from: 'api', blocks: 'ui' }]
+    }),
+    (error) => {
+      assert.ok(error instanceof LinearServiceError);
+      assert.equal(error.code, 'planned_issue_batch_partial_failure');
+      const partial = error.details.partial as Record<string, unknown>;
+      assert.equal((partial.issues as unknown[]).length, 1);
+      assert.deepEqual(partial.dependencies, []);
+      assert.deepEqual((partial.failed as Record<string, unknown>).edge, { from: 'api', blocks: 'ui' });
+      assert.equal(((partial.failed as Record<string, unknown>).error as Record<string, unknown>).code, 'invalid_dependency_key');
+      return true;
+    }
+  );
+});
+
+test('Linear service explicitly promotes managed project issues to Todo', async () => {
+  const updated: Array<{ id: string; input: Record<string, unknown> }> = [];
+  const service = createLinearService({
+    client: fakeClient({
+      async workflowStates(variables) {
+        const filter = variables?.filter as { name?: { eq?: string }; team?: { id?: { eq?: string } } };
+        assert.equal(filter.team?.id?.eq, 'linear-team-id');
+        return { nodes: [{ id: `state-${filter.name?.eq ?? 'unknown'}`, name: filter.name?.eq ?? 'unknown' }] };
+      },
+      async updateIssue(id, input) {
+        updated.push({ id, input });
+        return { issue: { id, identifier: 'MRB-1', url: 'https://linear.app/acme/issue/MRB-1/test' } };
+      }
+    })
+  });
+
+  await service.promoteReadyIssue(projectFixture(), 'issue-1');
+
+  assert.deepEqual(updated[0], { id: 'issue-1', input: { stateId: 'state-Todo' } });
 });
 
 test('Linear service creates deterministic dependency links', async () => {
