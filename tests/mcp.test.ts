@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -167,6 +167,54 @@ test('MCP registry tools can register, list, and get projects', async () => {
     }, runtime);
     const fetchedProject = (((fetched?.result as Record<string, unknown>).structuredContent as Record<string, unknown>).project as Record<string, unknown>);
     assert.equal(fetchedProject.name, 'Meta Orchestrator');
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('MCP smoke registers project, renders workflow, and validates setup', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb13-mcp-smoke-'));
+  const configPath = join(cwd, 'registry.yaml');
+  const repoPath = join(cwd, 'repo');
+  const workspacePath = join(cwd, 'workspace');
+  const logsPath = join(cwd, 'logs');
+  const project = {
+    id: 'meta-orchestrator',
+    name: 'Meta Orchestrator',
+    linear: { teamKey: 'MRB', projectKey: 'META' },
+    repo: { path: repoPath },
+    symphony: { workspacePath, logsPath, mcpPort: 4100 }
+  };
+
+  try {
+    mkdirSync(repoPath, { recursive: true });
+    mkdirSync(join(repoPath, '.git'), { recursive: true });
+    const runtime = createRuntimeConfig({ env: {}, argv: ['--config', configPath], cwd: process.cwd() });
+
+    const registered = await handleMcpMessage({
+      jsonrpc: '2.0',
+      id: 'register',
+      method: 'tools/call',
+      params: { name: 'register_project', arguments: { project } }
+    }, runtime);
+    assert.equal(((registered?.result as Record<string, unknown>).structuredContent as Record<string, unknown>).status, 'ok');
+
+    const rendered = await handleMcpMessage({
+      jsonrpc: '2.0',
+      id: 'render',
+      method: 'tools/call',
+      params: { name: 'generate_workflow', arguments: { projectId: 'meta-orchestrator' } }
+    }, runtime);
+    const workflow = (((rendered?.result as Record<string, unknown>).structuredContent as Record<string, unknown>).workflow as Record<string, unknown>);
+    assert.equal(workflow.workflowPath, join(workspacePath, 'WORKFLOW.md'));
+
+    const validated = await handleMcpMessage({
+      jsonrpc: '2.0',
+      id: 'validate',
+      method: 'tools/call',
+      params: { name: 'validate_project', arguments: { projectId: 'meta-orchestrator' } }
+    }, runtime);
+    assert.equal(((validated?.result as Record<string, unknown>).structuredContent as Record<string, unknown>).status, 'ok');
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

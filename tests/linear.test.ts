@@ -123,6 +123,48 @@ test('Linear service creates deterministic dependency links', async () => {
   assert.deepEqual(calls[0], { issueId: 'issue-b', relatedIssueId: 'issue-a', type: 'blocks' });
 });
 
+test('Linear service smoke creates project, issue batch, and dependency link', async () => {
+  const calls: Record<string, unknown[]> = { projects: [], batches: [], dependencies: [] };
+  const service = createLinearService({
+    client: fakeClient({
+      async createProject(input) {
+        calls.projects.push(input);
+        return { project: { id: 'project-1', name: 'Meta', slugId: 'meta-123', url: 'https://linear.app/acme/project/meta-123' } };
+      },
+      async createIssueBatch(input) {
+        calls.batches.push(input);
+        return {
+          issues: [
+            { id: 'issue-1', identifier: 'MRB-1', url: 'https://linear.app/acme/issue/MRB-1/a' },
+            { id: 'issue-2', identifier: 'MRB-2', url: 'https://linear.app/acme/issue/MRB-2/b' }
+          ]
+        };
+      },
+      async createIssueRelation(input) {
+        calls.dependencies.push(input);
+        return { relation: { id: 'relation-1', type: 'blocks' } };
+      }
+    })
+  });
+
+  const project = await service.createProject({ name: 'Meta', teamKey: 'MRB' });
+  const issues = await service.createIssueBatch({
+    issues: [
+      { title: 'first', teamKey: 'MRB', projectId: project.id },
+      { title: 'second', teamKey: 'MRB', projectId: project.id }
+    ]
+  });
+  const dependency = await service.createDependency({
+    blockingIssueId: issues[0].id ?? '',
+    blockedIssueId: issues[1].id ?? ''
+  });
+
+  assert.equal(project.id, 'project-1');
+  assert.deepEqual(issues.map((issue) => issue.identifier), ['MRB-1', 'MRB-2']);
+  assert.deepEqual(calls.dependencies[0], { issueId: 'issue-1', relatedIssueId: 'issue-2', type: 'blocks' });
+  assert.deepEqual(dependency, { id: 'relation-1', type: 'blocks' });
+});
+
 test('Linear service exposes structured errors for callers', async () => {
   const service = createLinearService({
     client: fakeClient({

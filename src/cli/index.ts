@@ -65,10 +65,15 @@ export async function runCli(
     }
   }
 
-  if (command === 'projects:validate') {
+  if (command === 'project:validate') {
     try {
-      const registry = await createProjectRegistryService(runtime.configPath).load();
-      const setup = await validateProjectWorkflowSetups(registry.projects);
+      const projectId = readOption(argv, ['--project', '--project-id']);
+      const projects = await selectedProjects(runtime.configPath, argv);
+      if (projects.length === 0) {
+        stderr.write(`Project not found${projectId === undefined ? '' : `: ${projectId}`}\n`);
+        return 1;
+      }
+      const setup = await validateProjectWorkflowSetups(projects);
       const ok = setup.every((validation) => validation.ok);
       stdout.write(`${JSON.stringify({ status: ok ? 'ok' : 'invalid', configPath: runtime.configPath, setup }, null, 2)}\n`);
       return ok ? 0 : 1;
@@ -78,7 +83,7 @@ export async function runCli(
     }
   }
 
-  if (command === 'workflows:render') {
+  if (command === 'workflow:render') {
     try {
       const projectId = readOption(argv, ['--project', '--project-id']);
       const projects = await createProjectRegistryService(runtime.configPath).list();
@@ -98,7 +103,7 @@ export async function runCli(
     }
   }
 
-  if (command.startsWith('runners:')) {
+  if (command.startsWith('runner:')) {
     try {
       const project = await selectedProject(runtime.configPath, argv);
       if (project === undefined) {
@@ -107,19 +112,19 @@ export async function runCli(
       }
 
       const manager = createRunnerManager();
-      if (command === 'runners:start') {
+      if (command === 'runner:start') {
         stdout.write(`${JSON.stringify({ status: 'ok', runner: await manager.start(project) }, null, 2)}\n`);
         return 0;
       }
-      if (command === 'runners:stop') {
+      if (command === 'runner:stop') {
         stdout.write(`${JSON.stringify({ status: 'ok', runner: await manager.stop(project) }, null, 2)}\n`);
         return 0;
       }
-      if (command === 'runners:restart') {
+      if (command === 'runner:restart') {
         stdout.write(`${JSON.stringify({ status: 'ok', runner: await manager.restart(project) }, null, 2)}\n`);
         return 0;
       }
-      if (command === 'runners:status') {
+      if (command === 'runner:status') {
         stdout.write(`${JSON.stringify({ status: 'ok', runner: await manager.status(project) }, null, 2)}\n`);
         return 0;
       }
@@ -134,6 +139,8 @@ export async function runCli(
 }
 
 function readCommand(argv: string[]): string | undefined {
+  const words: string[] = [];
+
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
 
@@ -146,10 +153,51 @@ function readCommand(argv: string[]): string | undefined {
       continue;
     }
 
-    return value;
+    words.push(value);
+    if (words.length === 2) {
+      break;
+    }
   }
 
-  return undefined;
+  return normalizeCommand(words);
+}
+
+function normalizeCommand(words: string[]): string | undefined {
+  const first = words[0];
+  const second = words[1];
+
+  if (first === undefined) {
+    return undefined;
+  }
+
+  const aliases: Record<string, string> = {
+    'projects:list': 'projects:list',
+    'projects:validate': 'project:validate',
+    'project:validate': 'project:validate',
+    'workflows:render': 'workflow:render',
+    'workflow:render': 'workflow:render',
+    'runners:start': 'runner:start',
+    'runners:stop': 'runner:stop',
+    'runners:restart': 'runner:restart',
+    'runners:status': 'runner:status',
+    'runner:start': 'runner:start',
+    'runner:stop': 'runner:stop',
+    'runner:restart': 'runner:restart',
+    'runner:status': 'runner:status'
+  };
+
+  if (aliases[first]) {
+    return aliases[first];
+  }
+
+  if (second !== undefined) {
+    const spaced = `${first}:${second}`;
+    if (aliases[spaced]) {
+      return aliases[spaced];
+    }
+  }
+
+  return first;
 }
 
 function helpText(): string {
@@ -158,13 +206,13 @@ function helpText(): string {
     '',
     'Commands:',
     '  health     Print runtime health information',
-    '  projects:list      List managed projects from the registry',
-    '  projects:validate  Validate the managed-project registry and workflow setup',
-    '  workflows:render   Render WORKFLOW.md for a managed project',
-    '  runners:start      Start the Symphony runner for a managed project',
-    '  runners:stop       Stop the Symphony runner for a managed project',
-    '  runners:restart    Restart the Symphony runner for a managed project',
-    '  runners:status     Inspect the Symphony runner for a managed project',
+    '  projects list      List managed projects from the registry',
+    '  project validate   Validate the managed-project registry and workflow setup',
+    '  workflow render    Render WORKFLOW.md for a managed project',
+    '  runner start       Start the Symphony runner for a managed project',
+    '  runner stop        Stop the Symphony runner for a managed project',
+    '  runner restart     Restart the Symphony runner for a managed project',
+    '  runner status      Inspect the Symphony runner for a managed project',
     '  version    Print package name and version',
     '',
     'Options:',
@@ -176,9 +224,14 @@ function helpText(): string {
 }
 
 async function selectedProject(configPath: string, argv: string[]) {
+  const projects = await selectedProjects(configPath, argv);
+  return projects[0];
+}
+
+async function selectedProjects(configPath: string, argv: string[]) {
   const projectId = readOption(argv, ['--project', '--project-id']);
   const projects = await createProjectRegistryService(configPath).list();
-  return projectId === undefined ? projects[0] : projects.find((candidate) => candidate.id === projectId);
+  return projectId === undefined ? projects : projects.filter((candidate) => candidate.id === projectId);
 }
 
 function formatError(error: unknown): string {
