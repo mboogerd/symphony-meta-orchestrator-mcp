@@ -1,0 +1,78 @@
+name: Enable auto-merge
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+      - ready_for_review
+  workflow_dispatch:
+    inputs:
+      pull_request:
+        description: Pull request number to enable auto-merge for
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  enable:
+    name: Enable auto-merge for Symphony PRs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve pull request
+        id: pr
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          INPUT_PR_NUMBER: ${{ inputs.pull_request }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "number=$INPUT_PR_NUMBER" >> "$GITHUB_OUTPUT"
+          else
+            echo "number=$EVENT_PR_NUMBER" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Inspect pull request
+        id: inspect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          pr_json="$(gh pr view "$PR_NUMBER" --repo "$REPOSITORY" --json baseRefName,headRefName,isDraft,labels,url)"
+          base_ref="$(jq -r '.baseRefName' <<< "$pr_json")"
+          head_ref="$(jq -r '.headRefName' <<< "$pr_json")"
+          is_draft="$(jq -r '.isDraft' <<< "$pr_json")"
+          has_symphony_label="$(jq -r 'any(.labels[]?; .name == "symphony")' <<< "$pr_json")"
+          url="$(jq -r '.url' <<< "$pr_json")"
+
+          eligible=false
+          if [ "$base_ref" = "main" ] && [ "$is_draft" = "false" ] && { [ "$has_symphony_label" = "true" ] || [[ "$head_ref" == mrb-* ]]; }; then
+            eligible=true
+          fi
+
+          echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "head_ref=$head_ref" >> "$GITHUB_OUTPUT"
+
+      - name: Enable auto-merge
+        if: steps.inspect.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ steps.inspect.outputs.url }}
+        run: |
+          if ! gh pr merge "$PR_URL" --auto --squash; then
+            auto_merge="$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest != null')"
+            if [ "$auto_merge" != "true" ]; then
+              exit 1
+            fi
+          fi
+
+      - name: Skip non-Symphony pull request
+        if: steps.inspect.outputs.eligible != 'true'
+        run: echo "Auto-merge is only enabled for non-draft main-targeting PRs with the symphony label or an mrb-* branch."
