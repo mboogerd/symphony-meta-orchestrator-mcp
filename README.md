@@ -139,6 +139,27 @@ The CLI exposes health, version, and registry list/validate commands. The MCP
 stdio entrypoint exposes managed projects through `resources/list` so later
 workflow, runner, and Linear services can consume the same registry service.
 
+### Linear planning recovery
+
+Project-scoped planning tools only operate on issues that belong to the
+managed Linear team and project. `link_project_issue_dependency` validates both
+the blocking and blocked issues before creating a relation, and
+`promote_ready_issue` validates the issue before moving it to Todo. Ownership
+failures are returned as structured `LinearServiceError` payloads with codes
+such as `missing_issue`, `wrong_team`, `wrong_project`, or
+`invalid_dependency_direction`.
+
+`create_planned_issue_batch` is intentionally not transactional. If issue
+creation or dependency linking fails after earlier operations succeeded, the
+tool returns `planned_issue_batch_partial_failure` with
+`details.partial.issues`, `details.partial.dependencies`, and
+`details.partial.failed`. The `issues` and `dependencies` arrays contain the
+already-created Linear references, including issue ids and identifiers, while
+`failed` includes the phase, stable issue key or dependency edge, and the
+structured underlying error. Agents and operators should use those returned
+references to inspect or clean up created work before retrying the remaining
+plan.
+
 ## Library Choices
 
 - MCP protocol handling uses the official `@modelcontextprotocol/sdk` server

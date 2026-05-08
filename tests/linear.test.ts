@@ -7,6 +7,15 @@ const projectFixture = () => managedProject({ repoPath: '/tmp/repo', workspaceRo
 
 function fakeClient(overrides: Partial<LinearSdkClient> = {}): LinearSdkClient {
   return {
+    async issue(id) {
+      return {
+        id,
+        identifier: 'MRB-1',
+        url: `https://linear.app/acme/issue/MRB-1/${id}`,
+        team: { id: 'linear-team-id', key: 'MRB' },
+        project: { id: 'linear-project-id', name: 'Meta' }
+      };
+    },
     async createProject(input) {
       return { project: { id: 'project-1', name: String(input.name), slugId: 'meta-123', url: 'https://linear.app/acme/project/meta-123' } };
     },
@@ -166,6 +175,136 @@ test('Linear service creates planned issue batch and dependencies by stable keys
   assert.deepEqual(batch.dependencies, [{ from: 'api', blocks: 'ui', dependency: { id: 'relation-1', type: 'blocks' } }]);
 });
 
+test('Linear service links dependencies only when both issues belong to managed project', async () => {
+  const relations: Record<string, unknown>[] = [];
+  const service = createLinearService({
+    client: fakeClient({
+      async createIssueRelation(input) {
+        relations.push(input);
+        return { relation: { id: 'relation-1', type: 'blocks' } };
+      }
+    })
+  });
+
+  const dependency = await service.linkProjectIssueDependency(projectFixture(), { blockingIssueId: 'issue-1', blockedIssueId: 'issue-2' });
+
+  assert.deepEqual(dependency, { id: 'relation-1', type: 'blocks' });
+  assert.deepEqual(relations[0], { issueId: 'issue-1', relatedIssueId: 'issue-2', type: 'blocks' });
+});
+
+test('Linear service rejects dependency links across projects', async () => {
+  const service = createLinearService({
+    client: fakeClient({
+      async issue(id) {
+        return {
+          id,
+          identifier: 'MRB-1',
+          url: `https://linear.app/acme/issue/MRB-1/${id}`,
+          team: { id: 'linear-team-id', key: 'MRB' },
+          project: { id: id === 'issue-2' ? 'other-project-id' : 'linear-project-id', name: 'Meta' }
+        };
+      },
+      async createIssueRelation() {
+        assert.fail('createIssueRelation should not be called for cross-project dependencies');
+      }
+    })
+  });
+
+  await assert.rejects(
+    service.linkProjectIssueDependency(projectFixture(), { blockingIssueId: 'issue-1', blockedIssueId: 'issue-2' }),
+    (error) => {
+      assert.ok(error instanceof LinearServiceError);
+      assert.equal(error.code, 'wrong_project');
+      assert.equal(error.operation, 'link_project_issue_dependency');
+      assert.deepEqual(error.details, {
+        issueId: 'issue-2',
+        role: 'blockedIssueId',
+        expectedProjectId: 'linear-project-id',
+        actualProjectId: 'other-project-id'
+      });
+      return true;
+    }
+  );
+});
+
+test('Linear service rejects dependency links across teams', async () => {
+  const service = createLinearService({
+    client: fakeClient({
+      async issue(id) {
+        return {
+          id,
+          identifier: 'MRB-1',
+          url: `https://linear.app/acme/issue/MRB-1/${id}`,
+          team: { id: id === 'issue-1' ? 'other-team-id' : 'linear-team-id', key: 'OTHER' },
+          project: { id: 'linear-project-id', name: 'Meta' }
+        };
+      },
+      async createIssueRelation() {
+        assert.fail('createIssueRelation should not be called for cross-team dependencies');
+      }
+    })
+  });
+
+  await assert.rejects(
+    service.linkProjectIssueDependency(projectFixture(), { blockingIssueId: 'issue-1', blockedIssueId: 'issue-2' }),
+    (error) => {
+      assert.ok(error instanceof LinearServiceError);
+      assert.equal(error.code, 'wrong_team');
+      assert.equal(error.operation, 'link_project_issue_dependency');
+      assert.deepEqual(error.details, {
+        issueId: 'issue-1',
+        role: 'blockingIssueId',
+        expectedTeamId: 'linear-team-id',
+        actualTeamId: 'other-team-id'
+      });
+      return true;
+    }
+  );
+});
+
+test('Linear service rejects dependency links for missing issues', async () => {
+  const service = createLinearService({
+    client: fakeClient({
+      async issue(id) {
+        return id === 'issue-2'
+          ? undefined
+          : {
+            id,
+            identifier: 'MRB-1',
+            url: `https://linear.app/acme/issue/MRB-1/${id}`,
+            team: { id: 'linear-team-id', key: 'MRB' },
+            project: { id: 'linear-project-id', name: 'Meta' }
+          };
+      }
+    })
+  });
+
+  await assert.rejects(
+    service.linkProjectIssueDependency(projectFixture(), { blockingIssueId: 'issue-1', blockedIssueId: 'issue-2' }),
+    (error) => {
+      assert.ok(error instanceof LinearServiceError);
+      assert.equal(error.code, 'missing_issue');
+      assert.equal(error.operation, 'link_project_issue_dependency');
+      assert.deepEqual(error.details, { issueId: 'issue-2', role: 'blockedIssueId' });
+      return true;
+    }
+  );
+});
+
+test('Linear service rejects invalid dependency direction', async () => {
+  const service = createLinearService({ client: fakeClient() });
+
+  await assert.rejects(
+    service.linkProjectIssueDependency(projectFixture(), { blockingIssueId: 'issue-1', blockedIssueId: 'issue-1' }),
+    (error) => {
+      assert.ok(error instanceof LinearServiceError);
+      assert.equal(error.code, 'invalid_dependency_direction');
+      assert.equal(error.operation, 'link_project_issue_dependency');
+      return true;
+    }
+  );
+});
+
 test('Linear service returns partial batch output for invalid dependency keys', async () => {
   const service = createLinearService({
     client: fakeClient({
@@ -212,6 +351,95 @@ test('Linear service explicitly promotes managed project issues to Todo', async 
   await service.promoteReadyIssue(projectFixture(), 'issue-1');
 
   assert.deepEqual(updated[0], { id: 'issue-1', input: { stateId: 'state-Todo' } });
+});
+
+test('Linear service rejects promotion for issues outside the managed project', async () => {
+  const service = createLinearService({
+    client: fakeClient({
+      async issue(id) {
+        return {
+          id,
+          identifier: 'MRB-1',
+          url: `https://linear.app/acme/issue/MRB-1/${id}`,
+          team: { id: 'linear-team-id', key: 'MRB' },
+          project: { id: 'other-project-id', name: 'Other' }
+        };
+      },
+      async updateIssue() {
+        assert.fail('updateIssue should not be called for cross-project promotion');
+      }
+    })
+  });
+
+  await assert.rejects(
+    service.promoteReadyIssue(projectFixture(), 'issue-1'),
+    (error) => {
+      assert.ok(error instanceof LinearServiceError);
+      assert.equal(error.code, 'wrong_project');
+      assert.equal(error.operation, 'promote_ready_issue');
+      return true;
+    }
+  );
+});
+
+test('Linear service partial batch failures include created issue references and failed operation details', async () => {
+  const created: Record<string, unknown>[] = [];
+  const service = createLinearService({
+    client: fakeClient({
+      async createIssue(input) {
+        created.push(input);
+        const index = created.length;
+        return { issue: { id: `issue-${index}`, identifier: `MRB-${index}`, url: `https://linear.app/acme/issue/MRB-${index}/test` } };
+      },
+      async issue(id) {
+        return {
+          id,
+          identifier: `MRB-${id}`,
+          url: `https://linear.app/acme/issue/MRB-${id}/test`,
+          team: { id: 'linear-team-id', key: 'MRB' },
+          project: { id: id === 'issue-2' ? 'other-project-id' : 'linear-project-id', name: 'Meta' }
+        };
+      }
+    })
+  });
+
+  await assert.rejects(
+    service.createPlannedIssueBatch(projectFixture(), {
+      issues: [
+        { key: 'api', title: 'Build API' },
+        { key: 'ui', title: 'Build UI' }
+      ],
+      dependencies: [{ from: 'api', blocks: 'ui' }]
+    }),
+    (error) => {
+      assert.ok(error instanceof LinearServiceError);
+      assert.equal(error.code, 'planned_issue_batch_partial_failure');
+      const partial = error.details.partial as Record<string, unknown>;
+      assert.deepEqual(partial.issues, [
+        { key: 'api', issue: { id: 'issue-1', identifier: 'MRB-1', url: 'https://linear.app/acme/issue/MRB-1/test' } },
+        { key: 'ui', issue: { id: 'issue-2', identifier: 'MRB-2', url: 'https://linear.app/acme/issue/MRB-2/test' } }
+      ]);
+      assert.deepEqual(partial.dependencies, []);
+      assert.deepEqual(partial.failed, {
+        phase: 'dependency',
+        key: undefined,
+        edge: { from: 'api', blocks: 'ui' },
+        error: {
+          name: 'LinearServiceError',
+          code: 'wrong_project',
+          operation: 'link_project_issue_dependency',
+          message: 'Linear issue "issue-2" is not in the managed project',
+          details: {
+            issueId: 'issue-2',
+            role: 'blockedIssueId',
+            expectedProjectId: 'linear-project-id',
+            actualProjectId: 'other-project-id'
+          }
+        }
+      });
+      return true;
+    }
+  );
 });
 
 test('Linear service creates deterministic dependency links', async () => {
