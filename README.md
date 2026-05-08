@@ -39,6 +39,11 @@ Run the full unit and mocked integration suite with:
 npm test
 ```
 
+Pull requests and pushes to `main` run the same suite in GitHub Actions through
+the `Test / Build and test` workflow job. To make the gate merge-blocking,
+configure the repository's `main` branch protection or ruleset to require the
+`Build and test` status check before merging.
+
 The MCP integration tests exercise the JSON-RPC message handler used by the
 stdio control plane and do not require real Linear, GitHub, or Symphony
 services. They create temporary registry, repository, workspace, and logs

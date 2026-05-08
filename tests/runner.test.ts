@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import test from 'node:test';
 import { createRunnerManager } from '../src/index.ts';
 import { managedProject, managedProjectYaml } from './project-fixtures.ts';
@@ -109,12 +109,18 @@ test('runner manager builds exact Elixir Symphony CLI argv from structured regis
   const workspacePath = join(cwd, 'workspace');
   const logsPath = join(cwd, 'logs');
   const installPath = join(cwd, 'symphony-install');
+  const binPath = join(cwd, 'bin');
+  const previousPath = process.env.PATH;
   const calls: Array<{ command: string; args: string[]; cwd?: string }> = [];
 
   try {
     spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
     writeFileSync(join(repoPath, 'WORKFLOW.md'), ['---', 'tracker:', '  kind: linear', '---', '', 'Prompt body.'].join('\n'));
     mkdirSync(installPath, { recursive: true });
+    mkdirSync(binPath, { recursive: true });
+    writeFileSync(join(binPath, 'mise'), '#!/bin/sh\nexit 0\n');
+    chmodSync(join(binPath, 'mise'), 0o755);
+    process.env.PATH = `${binPath}${delimiter}${previousPath ?? ''}`;
     const project = managedProject({
       repoPath,
       workspaceRoot: workspacePath,
@@ -158,6 +164,7 @@ test('runner manager builds exact Elixir Symphony CLI argv from structured regis
     assert.equal(started.status.workflowPath, join(workspacePath, 'WORKFLOW.md'));
     assert.equal(started.status.logPath, join(logsPath, 'meta-orchestrator.runner.log'));
   } finally {
+    process.env.PATH = previousPath;
     rmSync(cwd, { recursive: true, force: true });
   }
 });
