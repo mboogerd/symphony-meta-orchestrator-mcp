@@ -31,4 +31,12 @@ export type {
   WorkflowSetupValidationPhase
 } from './services/workflow/index.ts';
 export { createIdleRunnerStatus, createRunnerManager } from './services/runner/index.ts';
-export type { RunnerManager, RunnerProcessState, RunnerStartResult, RunnerStatus } from './services/runner/index.ts';
+export type {
+  RunnerManager,
+  RunnerProcessState,
+  RunnerReadinessCheck,
+  RunnerReadinessResult,
+  RunnerReadinessState,
+  RunnerStartResult,
+  RunnerStatus
+} from './services/runner/index.ts';

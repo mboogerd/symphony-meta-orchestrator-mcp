@@ -17,17 +17,19 @@ test('runner manager starts, reports, prevents duplicate starts, stops, and rest
   try {
     spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
     writeFileSync(join(repoPath, 'WORKFLOW.md'), ['---', 'tracker:', '  kind: linear', '---', '', 'Prompt body.'].join('\n'));
-    const project = managedProject({ repoPath, workspaceRoot: workspacePath, logsRoot: logsPath });
+    const runnerPort = 46_010 + Math.trunc(Math.random() * 1000);
+    const project = managedProject({ repoPath, workspaceRoot: workspacePath, logsRoot: logsPath, runnerPort });
     const manager = createRunnerManager({
       command: process.execPath,
-      commandArgs: persistentNodeRunnerArgs()
+      commandArgs: readyNodeRunnerArgs(project.id),
+      readinessPollIntervalMs: 10
     });
 
     const started = await manager.start(project);
     assert.equal(started.started, true);
     assert.equal(started.status.state, 'running');
-    assert.equal(started.status.port, 4310);
-    assert.equal(started.status.dashboardUrl, 'http://localhost:4310');
+    assert.equal(started.status.port, runnerPort);
+    assert.equal(started.status.dashboardUrl, `http://localhost:${runnerPort}`);
     assert.equal(started.status.workflowPath, join(workspacePath, 'WORKFLOW.md'));
     assert.equal(started.status.logPath, join(logsPath, 'meta-orchestrator.runner.log'));
     assert.equal(existsSync(started.status.statePath), true);
@@ -67,7 +69,7 @@ test('runner status returns idle details before a project has been started', asy
       workspaceRoot: join(cwd, 'workspace'),
       logsRoot: join(cwd, 'logs')
     });
-    const manager = createRunnerManager({ command: process.execPath, commandArgs: persistentNodeRunnerArgs() });
+    const manager = createRunnerManager({ command: process.execPath, commandArgs: readyNodeRunnerArgs('meta-orchestrator') });
 
     const status = await manager.status(project);
     assert.equal(status.state, 'idle');
@@ -96,7 +98,7 @@ test('runner manager start reports invalid setup when runner port is occupied', 
     spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
     writeFileSync(join(repoPath, 'WORKFLOW.md'), 'Prompt body.');
 
-    const manager = createRunnerManager({ command: process.execPath, commandArgs: persistentNodeRunnerArgs() });
+    const manager = createRunnerManager({ command: process.execPath, commandArgs: readyNodeRunnerArgs('meta-orchestrator') });
     const result = await manager.start(managedProject({ repoPath, workspaceRoot: workspacePath, logsRoot: logsPath, runnerPort }));
 
     assert.equal(result.started, false);
@@ -104,6 +106,161 @@ test('runner manager start reports invalid setup when runner port is occupied', 
     assert.match(result.status.details.message, /Runner port .* is already in use/);
   } finally {
     await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('runner manager start reports readiness timeout with log path and excerpt', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb26-runner-timeout-'));
+  const repoPath = join(cwd, 'repo');
+  const workspacePath = join(cwd, 'workspace');
+  const logsPath = join(cwd, 'logs');
+
+  try {
+    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    writeFileSync(join(repoPath, 'WORKFLOW.md'), 'Prompt body.');
+    const project = managedProject({ repoPath, workspaceRoot: workspacePath, logsRoot: logsPath, runnerPort: 47_010 + Math.trunc(Math.random() * 1000) });
+    mkdirSync(logsPath, { recursive: true });
+    writeFileSync(join(logsPath, `${project.id}.runner.log`), 'waiting for dashboard\n');
+    const manager = createRunnerManager({
+      command: process.execPath,
+      commandArgs: persistentNodeRunnerArgs(),
+      readinessTimeoutMs: 75,
+      readinessPollIntervalMs: 5,
+      readinessCheck: async () => ({ ready: false, state: 'not_ready', message: 'mock dashboard unavailable' })
+    });
+
+    const started = await manager.start(project);
+
+    assert.equal(started.started, true);
+    assert.equal(started.status.state, 'unhealthy');
+    assert.equal(started.status.details.readiness, 'timeout');
+    assert.match(started.status.details.message, /timed out/);
+    assert.match(started.status.details.message, new RegExp(project.id));
+    assert.ok(started.status.details.logExcerpt?.includes('waiting for dashboard'));
+    await manager.stop(project);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('runner manager start reports early process exit with recent logs', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb26-runner-exit-'));
+  const repoPath = join(cwd, 'repo');
+  const workspacePath = join(cwd, 'workspace');
+  const logsPath = join(cwd, 'logs');
+
+  try {
+    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    writeFileSync(join(repoPath, 'WORKFLOW.md'), 'Prompt body.');
+    const project = managedProject({ repoPath, workspaceRoot: workspacePath, logsRoot: logsPath, runnerPort: 48_010 + Math.trunc(Math.random() * 1000) });
+    const manager = createRunnerManager({
+      command: process.execPath,
+      commandArgs: ['-e', "console.error('startup failed: bad config'); process.exit(42)", '--'],
+      readinessTimeoutMs: 500,
+      readinessPollIntervalMs: 10
+    });
+
+    const started = await manager.start(project);
+
+    assert.equal(started.status.state, 'unhealthy');
+    assert.equal(started.status.details.readiness, 'exited');
+    assert.match(started.status.details.message, /exited before readiness/);
+    assert.deepEqual(started.status.details.logExcerpt, ['startup failed: bad config']);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('runner manager status reports unhealthy when process exists but service is not ready', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb26-runner-unhealthy-'));
+  const repoPath = join(cwd, 'repo');
+  const workspacePath = join(cwd, 'workspace');
+  const logsPath = join(cwd, 'logs');
+  let ready = true;
+
+  try {
+    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    writeFileSync(join(repoPath, 'WORKFLOW.md'), 'Prompt body.');
+    const project = managedProject({ repoPath, workspaceRoot: workspacePath, logsRoot: logsPath, runnerPort: 49_010 + Math.trunc(Math.random() * 1000) });
+    const manager = createRunnerManager({
+      command: process.execPath,
+      commandArgs: persistentNodeRunnerArgs(),
+      readinessTimeoutMs: 50,
+      readinessPollIntervalMs: 5,
+      readinessCheck: async () => ready
+        ? { ready: true, state: 'ready', message: 'mock service ready' }
+        : { ready: false, state: 'not_ready', message: 'mock service stopped responding' }
+    });
+
+    const started = await manager.start(project);
+    assert.equal(started.status.state, 'running');
+
+    ready = false;
+    const status = await manager.status(project);
+    assert.equal(status.state, 'unhealthy');
+    assert.equal(status.details.readiness, 'not_ready');
+    assert.match(status.details.message, /stopped responding/);
+    await manager.stop(project);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('runner manager reports wrong workflow readiness signal', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb26-runner-wrong-workflow-'));
+  const repoPath = join(cwd, 'repo');
+  const workspacePath = join(cwd, 'workspace');
+  const logsPath = join(cwd, 'logs');
+
+  try {
+    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    writeFileSync(join(repoPath, 'WORKFLOW.md'), 'Prompt body.');
+    const project = managedProject({ repoPath, workspaceRoot: workspacePath, logsRoot: logsPath, runnerPort: 50_010 + Math.trunc(Math.random() * 1000) });
+    const manager = createRunnerManager({
+      command: process.execPath,
+      commandArgs: persistentNodeRunnerArgs(),
+      readinessTimeoutMs: 25,
+      readinessPollIntervalMs: 5,
+      readinessCheck: async () => ({ ready: false, state: 'wrong_workflow', message: 'Runner is serving workflow "/tmp/other", expected rendered workflow' })
+    });
+
+    const started = await manager.start(project);
+
+    assert.equal(started.status.state, 'unhealthy');
+    assert.equal(started.status.details.readiness, 'wrong_workflow');
+    assert.match(started.status.details.message, /wrong_workflow|serving workflow/);
+    await manager.stop(project);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('runner manager reports wrong project readiness signal', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb26-runner-wrong-project-'));
+  const repoPath = join(cwd, 'repo');
+  const workspacePath = join(cwd, 'workspace');
+  const logsPath = join(cwd, 'logs');
+
+  try {
+    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    writeFileSync(join(repoPath, 'WORKFLOW.md'), 'Prompt body.');
+    const project = managedProject({ repoPath, workspaceRoot: workspacePath, logsRoot: logsPath, runnerPort: 52_010 + Math.trunc(Math.random() * 1000) });
+    const manager = createRunnerManager({
+      command: process.execPath,
+      commandArgs: persistentNodeRunnerArgs(),
+      readinessTimeoutMs: 25,
+      readinessPollIntervalMs: 5,
+      readinessCheck: async () => ({ ready: false, state: 'wrong_project', message: 'Runner is serving project "other-project", expected "meta-orchestrator"' })
+    });
+
+    const started = await manager.start(project);
+
+    assert.equal(started.status.state, 'unhealthy');
+    assert.equal(started.status.details.readiness, 'wrong_project');
+    assert.match(started.status.details.message, /serving project/);
+    await manager.stop(project);
+  } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
 });
@@ -132,8 +289,22 @@ test('runner manager tails bounded log lines', async () => {
   }
 });
 
-function persistentNodeRunnerArgs(): string[] {
-  return ['-e', 'setInterval(() => {}, 1000)', '--'];
+function persistentNodeRunnerArgs(startupCode = ''): string[] {
+  return ['-e', `${startupCode}; setInterval(() => {}, 1000)`, '--'];
+}
+
+function readyNodeRunnerArgs(projectId: string): string[] {
+  return ['-e', [
+    "const http = require('node:http');",
+    "const args = process.argv.slice(1);",
+    "const port = Number(args[args.indexOf('--port') + 1]);",
+    "const workflowPath = args.at(-1);",
+    "http.createServer((req, res) => {",
+    "  res.setHeader('content-type', 'application/json');",
+    `  res.end(JSON.stringify({ projectId: ${JSON.stringify(projectId)}, workflowPath, state: 'ready' }));`,
+    "}).listen(port, '127.0.0.1');",
+    "setInterval(() => {}, 1000);"
+  ].join(''), '--'];
 }
 
 test('runner manager builds exact Elixir Symphony CLI argv from structured registry fields', async () => {
@@ -143,6 +314,7 @@ test('runner manager builds exact Elixir Symphony CLI argv from structured regis
   const logsPath = join(cwd, 'logs');
   const installPath = join(cwd, 'symphony-install');
   const binPath = join(cwd, 'bin');
+  const runnerPort = 51_010 + Math.trunc(Math.random() * 1000);
   const previousPath = process.env.PATH;
   const calls: Array<{ command: string; args: string[]; cwd?: string }> = [];
 
@@ -165,7 +337,8 @@ test('runner manager builds exact Elixir Symphony CLI argv from structured regis
         './bin/symphony',
         '--i-understand-that-this-will-be-running-without-the-usual-guardrails'
       ],
-      cwd: installPath
+      cwd: installPath,
+      runnerPort
     });
     const manager = createRunnerManager({
       spawnProcess: ((command, args, options) => {
@@ -185,7 +358,7 @@ test('runner manager builds exact Elixir Symphony CLI argv from structured regis
       './bin/symphony',
       '--i-understand-that-this-will-be-running-without-the-usual-guardrails',
       '--port',
-      '4310',
+      String(runnerPort),
       '--logs-root',
       logsPath,
       join(workspacePath, 'WORKFLOW.md')

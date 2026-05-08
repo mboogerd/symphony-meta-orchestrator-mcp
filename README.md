@@ -69,12 +69,18 @@ SYMPHONY_CONFIG_PATH=./symphony.registry.yaml
 SYMPHONY_LOG_LEVEL=info
 LINEAR_API_KEY=<linear-api-key>
 SYMPHONY_RUNNER_COMMAND="node"
+SYMPHONY_RUNNER_READINESS_TIMEOUT_MS=30000
+SYMPHONY_RUNNER_READINESS_POLL_INTERVAL_MS=500
 ```
 
 `LINEAR_API_KEY` is required for Linear project and issue creation. Registry,
 workflow, and runner status commands can run without it. Override
 `SYMPHONY_RUNNER_COMMAND` during local tests when you want the runner manager to
 launch a known local command instead of the registry command.
+`SYMPHONY_RUNNER_READINESS_TIMEOUT_MS` controls how long `runner start` waits
+for the configured dashboard/API URL to respond before reporting the runner as
+unhealthy. `SYMPHONY_RUNNER_READINESS_POLL_INTERVAL_MS` controls the polling
+cadence.
 
 ### Project validation output
 
@@ -109,6 +115,25 @@ runner command, or non-executable runner command path. Set
 `SYMPHONY_VALIDATE_LINEAR=1` for CLI validation, or pass
 `validateLinear: true` to MCP `validate_project`, to require `LINEAR_API_KEY`
 and validate Linear-specific registry fields.
+
+### Runner readiness and lifecycle
+
+`runner start` no longer treats a spawned PID as healthy on its own. After the
+process starts, the manager polls the configured `symphony.dashboardUrl`, or
+`http://localhost:<runnerPort>` when no explicit URL is set, until the service
+responds or the readiness timeout expires. A ready JSON response may expose
+`projectId`, `project.id`, `workflowPath`, or `workflow.path`; when present,
+those fields must match the managed project and rendered workflow. If the
+dashboard only returns a successful non-JSON response, the runner is marked
+ready using that weaker service-level signal and the status message documents
+that project/workflow identity was not exposed.
+
+Lifecycle status can be `idle`, `starting`, `running`, `unhealthy`, `stopped`,
+`missing`, or `invalid`. `runner status` probes the service again for live
+processes, so a process that still exists but no longer responds is reported as
+`unhealthy` instead of `running`. Startup timeouts, early exits, wrong project
+or workflow responses, and other readiness failures include the runner log path
+and recent log excerpts when available.
 
 Managed projects are stored as YAML runtime files:
 
