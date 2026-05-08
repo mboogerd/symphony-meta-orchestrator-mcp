@@ -31,6 +31,31 @@ npm run cli -- runner status --config symphony.registry.yaml --project meta-orch
 npm run mcp
 ```
 
+### Tests
+
+Run the full unit and mocked integration suite with:
+
+```sh
+npm test
+```
+
+The MCP integration tests exercise the JSON-RPC message handler used by the
+stdio control plane and do not require real Linear, GitHub, or Symphony
+services. They create temporary registry, repository, workspace, and logs
+directories under the OS temp root and remove them after each test. External
+boundaries are mocked as follows:
+
+- Linear SDK calls use an in-memory `LinearService` client that returns teams,
+  Backlog states, issues, and dependency relations while recording the exact
+  requested operations.
+- Symphony runner process management is injected as a mock `RunnerManager`, so
+  no real runner process is spawned for end-to-end MCP lifecycle assertions.
+- Filesystem behavior is isolated to per-test temporary directories, including
+  repo-owned workflow templates and generated workspace `WORKFLOW.md` files.
+- Runner validation failure cases use local-only probes, including a temporary
+  TCP listener for unavailable port coverage and a deliberately missing command
+  name for command lookup coverage.
+
 Required local environment:
 
 ```sh
