@@ -177,11 +177,18 @@ async function handleToolCall(message: JsonRpcRequest, runtime: RuntimeConfig): 
     }
 
     if (name === 'validate_project') {
-      const projects = await selectedProjects(runtime, argumentsValue.projectId);
+      const loadedRegistry = await registry.load();
+      const projects = argumentsValue.projectId === undefined
+        ? loadedRegistry.projects
+        : loadedRegistry.projects.filter((candidate) => candidate.id === argumentsValue.projectId);
       if (projects.length === 0) {
         return toolError(message.id ?? null, 'project_not_found', 'Project was not found', { projectId: argumentsValue.projectId });
       }
-      const setup = await validateProjectWorkflowSetups(projects);
+      const setup = await validateProjectWorkflowSetups(projects, {
+        registry: loadedRegistry,
+        validateLinear: argumentsValue.validateLinear === true,
+        env: runtime.env
+      });
       return toolResult(message.id ?? null, { setup }, setup.some((validation) => !validation.ok));
     }
 

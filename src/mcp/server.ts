@@ -86,13 +86,14 @@ function registerTools(server: McpServer, runtime: RuntimeConfig): void {
 
   server.registerTool('validate_project', {
     description: 'Validate one project or all registry projects and workflow setup.',
-    inputSchema: { projectId: optionalString }
-  }, async ({ projectId }) => {
-    const projects = await selectedProjects(runtime, projectId);
+    inputSchema: { projectId: optionalString, validateLinear: z.boolean().optional() }
+  }, async ({ projectId, validateLinear }) => {
+    const loadedRegistry = await registry(runtime).load();
+    const projects = projectId === undefined ? loadedRegistry.projects : loadedRegistry.projects.filter((candidate) => candidate.id === projectId);
     if (projects.length === 0) {
       return toolError('project_not_found', 'Project was not found', { projectId });
     }
-    const setup = await validateProjectWorkflowSetups(projects);
+    const setup = await validateProjectWorkflowSetups(projects, { registry: loadedRegistry, validateLinear, env: runtime.env });
     return toolResult({ setup }, setup.some((validation) => !validation.ok));
   });
 
