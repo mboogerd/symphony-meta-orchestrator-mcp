@@ -141,8 +141,39 @@ test('MCP integration sets up a managed project end-to-end with defaults', async
     assert.equal(payload.setup.workflow.workflowPath, join(fixture.workspacePath, 'WORKFLOW.md'));
     assert.equal(existsSync(fixture.repoPath), true);
     assert.equal(payload.setup.runner.status.state, 'running');
-    assert.deepEqual(calls.map((call) => call.method), ['teams', 'createProject']);
+    assert.deepEqual(calls.map((call) => call.method), ['teams', 'teams', 'team.projects', 'createProject']);
     assert.deepEqual(runnerCalls, ['start:dummy-project']);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('MCP integration attaches existing same-name Linear project during setup', async () => {
+  const fixture = createProjectFixture('mrb97-existing-name-');
+  const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+
+  try {
+    configureGitOrigin(fixture.repoPath);
+    const runtime = runtimeFor(fixture.configPath, {
+      createLinearService: () => new LinearService({ client: mockLinearClient(calls) })
+    });
+
+    const response = await callTool(runtime, 'setup-existing-name', 'setup_project', {
+      name: 'Existing Name Project',
+      teamKey: 'MRB',
+      repoPath: fixture.repoPath,
+      runnerPort: fixture.project.symphony.runnerPort,
+      workspaceRoot: fixture.workspacePath,
+      logsRoot: fixture.logsPath
+    });
+
+    assertJsonRpcOk(response, 'setup-existing-name');
+    const payload = toolPayload(response);
+    assert.equal(payload.status, 'ok');
+    assert.equal(payload.setup.project.tracker.projectId, 'existing-name-project-id');
+    assert.equal(payload.setup.project.tracker.projectSlug, 'existing-name-project-slug');
+    assert.deepEqual(calls.map((call) => call.method), ['teams', 'teams', 'team.projects']);
+    assert.deepEqual(calls[2].input, { filter: { name: { eqIgnoreCase: 'Existing Name Project' } }, first: 2 });
   } finally {
     fixture.cleanup();
   }
@@ -627,6 +658,16 @@ function mockLinearClient(calls: Array<{ method: string; input: Record<string, u
                   name: 'Existing Project',
                   slugId: 'existing-project-slug',
                   url: 'https://linear.example/existing-project'
+                }]
+              };
+            }
+            if (projectsInput?.filter?.name?.eqIgnoreCase === 'Existing Name Project') {
+              return {
+                nodes: [{
+                  id: 'existing-name-project-id',
+                  name: 'Existing Name Project',
+                  slugId: 'existing-name-project-slug',
+                  url: 'https://linear.example/existing-name-project'
                 }]
               };
             }

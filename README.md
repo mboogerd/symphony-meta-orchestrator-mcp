@@ -124,10 +124,10 @@ and validate Linear-specific registry fields.
 The MCP `setup_project` tool provides the managed-project happy path in one
 call. It accepts `name`, `teamKey`, `repoPath`, `runnerPort`, `workspaceRoot`,
 `logsRoot`, optional `linearProjectId`, and optional `startRunner`. The tool
-resolves the Linear team, creates the Linear project unless `linearProjectId`
-is supplied, validates any supplied Linear project belongs to that team, stores
-a registry entry with the documented defaults, renders `WORKFLOW.md`, and
-starts the runner when requested.
+resolves the Linear team, attaches an existing same-name Linear project in that
+team or creates one when none exists, validates any supplied Linear project
+belongs to that team, stores a registry entry with the documented defaults,
+renders `WORKFLOW.md`, and starts the runner when requested.
 
 The response includes `setup.project`, `setup.linearProject`, `setup.team`,
 `setup.workflow`, optional `setup.runner`, and ordered `setup.steps`. If a later
