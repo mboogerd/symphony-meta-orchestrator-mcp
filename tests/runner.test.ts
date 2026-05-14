@@ -82,6 +82,50 @@ test('runner status returns idle details before a project has been started', asy
   }
 });
 
+test('runner status clears stale state for a missing process before returning registry details', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb90-runner-stale-state-'));
+  const logsPath = join(cwd, 'logs');
+
+  try {
+    mkdirSync(logsPath, { recursive: true });
+    const project = managedProject({
+      repoPath: join(cwd, 'repo'),
+      workspaceRoot: join(cwd, 'workspace'),
+      logsRoot: logsPath,
+      command: 'node',
+      args: ['current']
+    });
+    const statePath = join(logsPath, `${project.id}.runner.json`);
+    writeFileSync(statePath, JSON.stringify({
+      projectId: project.id,
+      pid: 1012,
+      command: 'mise',
+      args: ['old'],
+      cwd: '/tmp/old',
+      workflowPath: '/tmp/old/WORKFLOW.md',
+      logPath: '/tmp/old/runner.log',
+      startedAt: '2024-01-01T00:00:00.000Z',
+      latestHeartbeat: '2024-01-01T00:00:00.000Z'
+    }));
+    const manager = createRunnerManager({
+      now: () => new Date('2026-05-14T00:00:00.000Z'),
+      isProcessAlive: () => false
+    });
+
+    const status = await manager.status(project);
+
+    assert.equal(status.state, 'idle');
+    assert.equal(status.command, 'node');
+    assert.deepEqual(status.args, ['current']);
+    assert.equal(status.pid, undefined);
+    assert.equal(status.latestHeartbeat, undefined);
+    assert.match(status.details.message, /Removed stale runner state/);
+    assert.equal(existsSync(statePath), false);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test('runner manager start reports invalid setup when runner port is occupied', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'mrb24-runner-port-'));
   const repoPath = join(cwd, 'repo');

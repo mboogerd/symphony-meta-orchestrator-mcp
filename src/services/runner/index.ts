@@ -1,5 +1,5 @@
 import { openSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import type { ManagedProject } from '../registry/index.ts';
@@ -233,20 +233,22 @@ export function createRunnerManager(options: RunnerManagerOptions = {}): RunnerM
       }
 
       const running = processAlive(state.pid);
-      let nextState: RunnerProcessState = running ? 'running' : 'missing';
-      let details: RunnerStatusDetails = {
-        message: running ? 'Runner process is running' : 'Runner process is not running',
+      if (!running) {
+        await removeState(paths.statePath);
+        return createIdleRunnerStatus(project, paths, `Removed stale runner state for missing process ${state.pid}`, checkedAt);
+      }
+
+      const initialDetails: RunnerStatusDetails = {
+        message: 'Runner process is running',
         checkedAt
       };
-      if (running) {
-        const readiness = await readinessCheck(project, statusFromState(project, paths, state, 'running', details));
-        details = {
-          message: readiness.message,
-          checkedAt,
-          readiness: readiness.state
-        };
-        nextState = readiness.ready ? 'running' : 'unhealthy';
-      }
+      const readiness = await readinessCheck(project, statusFromState(project, paths, state, 'running', initialDetails));
+      const details: RunnerStatusDetails = {
+        message: readiness.message,
+        checkedAt,
+        readiness: readiness.state
+      };
+      const nextState: RunnerProcessState = readiness.ready ? 'running' : 'unhealthy';
       const nextStatus = statusFromState(project, paths, state, nextState, details);
       await writeState(paths.statePath, { ...state, latestHeartbeat: checkedAt, status: details });
       return nextStatus;
@@ -584,6 +586,16 @@ async function readState(statePath: string): Promise<RunnerStateFile | undefined
 async function writeState(statePath: string, state: RunnerStateFile): Promise<void> {
   await mkdir(dirname(statePath), { recursive: true });
   await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+}
+
+async function removeState(statePath: string): Promise<void> {
+  try {
+    await unlink(statePath);
+  } catch (error) {
+    if (!(isNodeError(error) && error.code === 'ENOENT')) {
+      throw error;
+    }
+  }
 }
 
 async function tailLogExcerpt(logPath: string): Promise<string[]> {
