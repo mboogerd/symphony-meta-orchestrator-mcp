@@ -41,6 +41,9 @@ function fakeClient(overrides: Partial<LinearSdkClient> = {}): LinearSdkClient {
     async teams() {
       return { nodes: [{ id: 'team-1', key: 'MRB' }] };
     },
+    async projects() {
+      return { nodes: [{ id: 'project-1', name: 'Meta', slugId: 'meta-123', url: 'https://linear.app/acme/project/meta-123' }] };
+    },
     async workflowStates() {
       return { nodes: [{ id: 'state-backlog', name: 'Backlog', type: 'backlog' }] };
     },
@@ -68,6 +71,31 @@ test('Linear service creates projects and returns slug metadata', async () => {
     url: 'https://linear.app/acme/project/meta-123'
   });
   assert.deepEqual(calls[0], { name: 'Meta', description: 'Milestone 1', leadId: undefined, teamIds: ['team-1'] });
+});
+
+test('Linear service resolves project slug metadata when create payload omits it', async () => {
+  const projectQueries: Record<string, unknown>[] = [];
+  const service = createLinearService({
+    client: fakeClient({
+      async createProject() {
+        return { project: { id: 'project-1', name: 'Meta' } };
+      },
+      async projects(variables) {
+        projectQueries.push(variables ?? {});
+        return { nodes: [{ id: 'project-1', name: 'Meta', slugId: 'meta-123', url: 'https://linear.app/acme/project/meta-123' }] };
+      }
+    })
+  });
+
+  const project = await service.createProject({ name: 'Meta', teamKey: 'MRB' });
+
+  assert.deepEqual(project, {
+    id: 'project-1',
+    name: 'Meta',
+    slugId: 'meta-123',
+    url: 'https://linear.app/acme/project/meta-123'
+  });
+  assert.deepEqual(projectQueries[0], { filter: { id: { eq: 'project-1' } }, first: 1 });
 });
 
 test('Linear service creates issues in Backlog by default and can move state', async () => {

@@ -176,12 +176,7 @@ export class LinearService {
         teamIds
       });
       const project = requireEntity(payload.project, 'project', 'create_project');
-      return {
-        id: project.id,
-        name: project.name,
-        slugId: requireString(project.slugId, 'project.slugId', 'create_project'),
-        url: requireString(project.url, 'project.url', 'create_project')
-      };
+      return this.toProjectReference(await this.hydrateProjectReference(project, 'create_project'), 'create_project');
     });
   }
 
@@ -207,12 +202,7 @@ export class LinearService {
     return this.wrap('resolve_project', async () => {
       const projects = await this.client.projects({ filter: { slugId: { eq: slugId } }, first: 1 });
       const project = projects.nodes[0];
-      return project === undefined ? undefined : {
-        id: project.id,
-        name: project.name,
-        slugId: requireString(project.slugId, 'project.slugId', 'resolve_project'),
-        url: requireString(project.url, 'project.url', 'resolve_project')
-      };
+      return project === undefined ? undefined : this.toProjectReference(project, 'resolve_project');
     });
   }
 
@@ -392,6 +382,25 @@ export class LinearService {
         { issueId, role, expectedProjectId: project.tracker.projectId, actualProjectId: issueProject?.id }
       );
     }
+  }
+
+  private async hydrateProjectReference(project: LinearProjectLike, operation: string): Promise<LinearProjectLike> {
+    if (project.slugId !== undefined && project.url !== undefined) {
+      return project;
+    }
+
+    const projects = await this.client.projects({ filter: { id: { eq: project.id } }, first: 1 });
+    const hydrated = requireEntity(projects.nodes[0], 'project', operation);
+    return { ...project, ...hydrated };
+  }
+
+  private toProjectReference(project: LinearProjectLike, operation: string): LinearProjectReference {
+    return {
+      id: project.id,
+      name: project.name,
+      slugId: requireString(project.slugId, 'project.slugId', operation),
+      url: requireString(project.url, 'project.url', operation)
+    };
   }
 
   private async wrap<T>(operation: string, action: () => Promise<T>): Promise<T> {
