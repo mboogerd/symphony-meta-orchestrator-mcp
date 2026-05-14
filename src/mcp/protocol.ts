@@ -114,7 +114,7 @@ export async function handleMcpMessage(message: unknown, runtime: McpRuntimeConf
             slugId: stringSchema(),
             teamKey: stringSchema()
           }),
-          tool('setup_project', setupProjectDescription, setupProjectSchema(), ['name', 'teamKey', 'githubUrl', 'runnerPort']),
+          tool('setup_project', setupProjectDescription, setupProjectSchema(), ['name', 'teamKey', 'githubUrl']),
           tool('create_issue', 'Create one Linear issue.', linearIssueSchema(), ['title']),
           tool('create_issue_batch', 'Create multiple Linear issues.', {
             issues: { type: 'array', items: { type: 'object', properties: linearIssueSchema() } }
@@ -470,16 +470,6 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
 }
 
-function optionalStringArray(value: unknown, field: string): string[] | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
-    throw new McpToolError('invalid_input', `${field} must be an array of strings`, { field });
-  }
-  return value;
-}
-
 function errorCode(error: unknown): string {
   if (error instanceof McpToolError || error instanceof LinearServiceError) {
     return error.code;
@@ -584,33 +574,22 @@ function setupProjectSchema(): Record<string, unknown> {
     name: stringSchema(),
     teamKey: stringSchema(),
     githubUrl: stringSchema(),
-    runnerPort: { type: 'integer', minimum: 1, maximum: 65535 },
-    workspaceRoot: stringSchema(),
-    logsRoot: stringSchema(),
-    runnerCommand: stringSchema(),
-    runnerArgs: { type: 'array', items: stringSchema() },
-    runnerCwd: stringSchema(),
     linearProjectId: stringSchema(),
     startRunner: { type: 'boolean' }
   };
 }
 
 function readSetupProjectInput(value: Record<string, unknown>) {
-  const runnerPort = value.runnerPort;
-  if (typeof runnerPort !== 'number' || !Number.isInteger(runnerPort) || runnerPort < 1 || runnerPort > 65535) {
-    throw new McpToolError('invalid_input', 'runnerPort must be an integer between 1 and 65535', { field: 'runnerPort' });
+  const allowed = new Set(['name', 'teamKey', 'githubUrl', 'linearProjectId', 'startRunner']);
+  const extraField = Object.keys(value).find((field) => !allowed.has(field));
+  if (extraField !== undefined) {
+    throw new McpToolError('invalid_input', `${extraField} is not a setup_project parameter`, { field: extraField });
   }
 
   return {
     name: requiredString(value.name, 'name'),
     teamKey: requiredString(value.teamKey, 'teamKey'),
     githubUrl: requiredString(value.githubUrl, 'githubUrl'),
-    runnerPort,
-    workspaceRoot: optionalString(value.workspaceRoot),
-    logsRoot: optionalString(value.logsRoot),
-    runnerCommand: optionalString(value.runnerCommand),
-    runnerArgs: optionalStringArray(value.runnerArgs, 'runnerArgs'),
-    runnerCwd: optionalString(value.runnerCwd),
     linearProjectId: optionalString(value.linearProjectId),
     startRunner: value.startRunner === true
   };

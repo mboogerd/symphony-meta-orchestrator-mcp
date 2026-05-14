@@ -216,6 +216,36 @@ test('generated workflow renders valid Symphony front matter and prompt body', a
   }
 });
 
+test('generated workflow clones the registered githubUrl into the workspace root', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb121-workflow-github-url-'));
+  const workspaceRoot = join(cwd, 'workspace');
+  const logsRoot = join(cwd, 'logs');
+  const githubUrl = 'https://github.com/org/repo.git';
+
+  try {
+    const project = {
+      id: 'github-url-project',
+      name: 'GitHub URL Project',
+      githubUrl,
+      workflow: { source: 'generated', template: 'default' },
+      codex: {
+        threadSandbox: 'workspace-write',
+        turnSandbox: { type: 'workspaceWrite', networkAccess: true }
+      }
+    } as const;
+    Object.defineProperty(project, 'symphony', {
+      enumerable: false,
+      value: { workspaceRoot, logsRoot }
+    });
+
+    const parsed = parseWorkflow((await renderProjectWorkflow(project)).content);
+
+    assert.equal(parsed.frontMatter.hooks.after_create, `git clone ${githubUrl} .`);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test('generated workflow validation does not require repo path to exist', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'mrb80-generated-missing-repo-'));
   const repoPath = join(cwd, 'missing-repo');

@@ -64,13 +64,12 @@ test('setupManagedProject derives repo fields and default roots from githubUrl',
     const result = await setupManagedProject({
       name: 'Meta Orchestrator',
       teamKey: 'MRB',
-      githubUrl: 'https://github.com/mboogerd/symphony-meta-orchestrator-mcp.git',
-      runnerPort: 4101,
-      runnerCommand: 'node'
+      githubUrl: 'https://github.com/mboogerd/symphony-meta-orchestrator-mcp.git'
     }, {
       env: {
         DEFAULT_SYMPHONY_WORKSPACES: workspaceBase,
-        DEFAULT_SYMPHONY_LOGS: logsBase
+        DEFAULT_SYMPHONY_LOGS: logsBase,
+        SYMPHONY_RUNNER_COMMAND: 'node'
       },
       linear: fakeLinear(),
       registry: {
@@ -83,12 +82,11 @@ test('setupManagedProject derives repo fields and default roots from githubUrl',
     });
 
     assert.equal(result.steps.map((step) => `${step.name}:${step.status}`).join(','), 'linearProject:ok,bootstrap:ok,registry:ok,workflow:ok,runner:skipped');
-    assert.equal(result.project?.repo.remoteUrl, 'https://github.com/mboogerd/symphony-meta-orchestrator-mcp.git');
-    assert.equal(result.project?.repo.cloneSource, 'https://github.com/mboogerd/symphony-meta-orchestrator-mcp.git');
-    assert.equal(result.project?.repo.path, join(workspaceBase, 'meta-orchestrator', 'mboogerd-symphony-meta-orchestrator-mcp'));
+    assert.equal(result.project?.githubUrl, 'https://github.com/mboogerd/symphony-meta-orchestrator-mcp.git');
+    assert.equal('repo' in (result.project ?? {}), false);
     assert.equal(result.project?.symphony.workspaceRoot, join(workspaceBase, 'meta-orchestrator'));
     assert.equal(result.project?.symphony.logsRoot, join(logsBase, 'meta-orchestrator'));
-    assert.equal(existsSync(result.project?.repo.path ?? ''), false);
+    assert.equal(existsSync(join(workspaceBase, 'meta-orchestrator', 'mboogerd-symphony-meta-orchestrator-mcp')), false);
     assert.equal(createdProject, result.project);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -99,11 +97,9 @@ test('setupManagedProject falls back to OS temp roots when roots are omitted', a
   const result = await setupManagedProject({
     name: 'Temp Root Project',
     teamKey: 'MRB',
-    githubUrl: 'git@github.com:mboogerd/example.git',
-    runnerPort: 4102,
-    runnerCommand: 'node'
+    githubUrl: 'git@github.com:mboogerd/example.git'
   }, {
-    env: {},
+    env: { SYMPHONY_RUNNER_COMMAND: 'node' },
     linear: fakeLinear(),
     registry: {
       create: async (project: unknown) => project as never
@@ -113,7 +109,7 @@ test('setupManagedProject falls back to OS temp roots when roots are omitted', a
 
   assert.equal(result.project?.symphony.workspaceRoot, join(tmpdir(), 'symphony-workspaces', 'temp-root-project'));
   assert.equal(result.project?.symphony.logsRoot, join(tmpdir(), 'symphony-logs', 'temp-root-project'));
-  assert.equal(result.project?.repo.path, join(tmpdir(), 'symphony-workspaces', 'temp-root-project', 'mboogerd-example'));
+  assert.equal('repo' in (result.project ?? {}), false);
 });
 
 type BootstrapFixture = {
