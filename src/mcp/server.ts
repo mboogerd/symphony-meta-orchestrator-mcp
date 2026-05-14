@@ -145,7 +145,7 @@ function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void
   server.registerTool('create_issue_batch', {
     description: 'Create multiple Linear issues.',
     inputSchema: { issues: z.array(z.object(linearIssueSchema).strict()) }
-  }, async ({ issues }) => withToolErrors(async () => toolResult({ issues: await linear(runtime).createIssueBatch(issues) })));
+  }, async ({ issues }) => withToolErrors(async () => toolResult({ issues: await linear(runtime).createIssueBatch({ issues }) })));
 
   server.registerTool('link_issue_dependency', {
     description: 'Link two Linear issues with a blocking dependency.',

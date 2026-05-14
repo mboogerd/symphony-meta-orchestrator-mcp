@@ -148,6 +148,23 @@ test('Linear service resolves lazy SDK issue payloads', async () => {
   assert.deepEqual(moved, { id: 'issue-1', identifier: 'MRB-1', url: 'https://linear.app/acme/issue/MRB-1/test' });
 });
 
+test('Linear service hydrates created issues when SDK payload omits url', async () => {
+  const service = createLinearService({
+    client: fakeClient({
+      async createIssue() {
+        return { issue: { id: 'issue-1', identifier: 'MRB-1' } };
+      },
+      async issue(id) {
+        return { id, identifier: 'MRB-1', url: 'https://linear.app/acme/issue/MRB-1/test' };
+      }
+    })
+  });
+
+  const created = await service.createIssue({ title: 'test', teamKey: 'MRB' });
+
+  assert.deepEqual(created, { id: 'issue-1', identifier: 'MRB-1', url: 'https://linear.app/acme/issue/MRB-1/test' });
+});
+
 test('Linear service creates issue batches with resolved Backlog states', async () => {
   const batches: Record<string, unknown>[] = [];
   const service = createLinearService({
@@ -168,6 +185,27 @@ test('Linear service creates issue batches with resolved Backlog states', async 
 
   assert.deepEqual(issues.map((issue) => issue.identifier), ['MRB-1', 'MRB-2']);
   assert.deepEqual((batches[0]?.issues as Array<Record<string, unknown>>).map((issue) => issue.stateId), ['state-backlog', 'state-backlog']);
+});
+
+test('Linear service accepts raw issue arrays for batch creation', async () => {
+  const batches: Record<string, unknown>[] = [];
+  const service = createLinearService({
+    client: fakeClient({
+      async createIssueBatch(input) {
+        batches.push(input);
+        return {
+          issues: [
+            { id: 'issue-1', identifier: 'MRB-1', url: 'https://linear.app/acme/issue/MRB-1/a' }
+          ]
+        };
+      }
+    })
+  });
+
+  const issues = await service.createIssueBatch([{ title: 'a', teamKey: 'MRB' }]);
+
+  assert.deepEqual(issues.map((issue) => issue.identifier), ['MRB-1']);
+  assert.equal((batches[0]?.issues as Array<Record<string, unknown>>)[0]?.title, 'a');
 });
 
 test('Linear service creates project issues using managed project defaults', async () => {

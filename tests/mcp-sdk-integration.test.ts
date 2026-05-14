@@ -207,6 +207,32 @@ test('SDK MCP returns structured Linear service errors', async () => {
   }
 });
 
+test('SDK MCP create_issue_batch passes the service batch input shape', async () => {
+  const fixture = createProjectFixture('mrb70-sdk-batch-');
+  const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+  const client = mockLinearClient(calls);
+
+  try {
+    const sdk = await createSdkHarness(runtimeFor(fixture.configPath, {
+      createLinearService: () => new LinearService({ client })
+    }));
+    try {
+      const payload = toolPayload(await sdk.client.callTool({
+        name: 'create_issue_batch',
+        arguments: { issues: [{ title: 'Test batch', teamKey: 'MRB' }] }
+      }));
+
+      assert.equal(payload.status, 'ok');
+      assert.deepEqual(calls.map((call) => call.method), ['teams', 'workflowStates', 'createIssueBatch']);
+      assert.equal(Array.isArray(calls[2].input.issues), true);
+    } finally {
+      await sdk.close();
+    }
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 function createProjectFixture(prefix: string) {
   const root = mkdtempSync(join(tmpdir(), prefix));
   const configPath = join(root, 'registry.yaml');
