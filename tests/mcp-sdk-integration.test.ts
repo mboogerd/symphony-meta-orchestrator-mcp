@@ -205,6 +205,7 @@ test('SDK MCP setup_project matches compatibility tool behavior', async () => {
         'workflow:ok',
         'runner:ok'
       ]);
+      assert.equal(payload.setup.project.tracker.projectSlug, 'dummy-project-97e46de28c13');
       assert.deepEqual(calls.map((call) => call.method), ['teams', 'teams', 'team.projects', 'createProject']);
       assert.deepEqual(runnerCalls, ['start:sdk-project']);
     } finally {
@@ -241,7 +242,7 @@ test('SDK MCP setup_project can attach an existing Linear project', async () => 
 
       assert.equal(payload.status, 'ok');
       assert.equal(payload.setup.project.tracker.projectId, 'existing-project-id');
-      assert.equal(payload.setup.project.tracker.projectSlug, 'existing-project-slug');
+      assert.equal(payload.setup.project.tracker.projectSlug, 'existing-project-97e46de28c13');
       assert.deepEqual(calls.map((call) => call.method), ['teams', 'teams', 'team.projects']);
     } finally {
       await sdk.close();
@@ -517,7 +518,7 @@ function mockLinearClient(calls: Array<{ method: string; input: Record<string, u
     },
     async createProject(input) {
       calls.push({ method: 'createProject', input });
-      return { project: { id: 'project-id', name: String(input.name), slugId: 'project-slug', url: 'https://linear.example/project' } };
+      return { project: { id: 'project-id', name: String(input.name), slugId: '97e46de28c13', url: 'https://linear.example/project/dummy-project-97e46de28c13' } };
     },
     async createIssue(input) {
       calls.push({ method: 'createIssue', input });
@@ -555,8 +556,8 @@ function mockLinearClient(calls: Array<{ method: string; input: Record<string, u
                 nodes: [{
                   id: 'existing-project-id',
                   name: 'Existing SDK Project',
-                  slugId: 'existing-project-slug',
-                  url: 'https://linear.example/existing-project'
+                  slugId: '97e46de28c13',
+                  url: 'https://linear.example/project/existing-project-97e46de28c13'
                 }]
               };
             }

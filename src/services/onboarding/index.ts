@@ -4,7 +4,7 @@ import { access, mkdir, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import type { LinearProjectReference, LinearService, LinearTeamReference } from '../linear/index.ts';
+import { linearProjectUrlSlug, type LinearProjectReference, type LinearService, type LinearTeamReference } from '../linear/index.ts';
 import type { ManagedProject, ProjectRegistryService } from '../registry/index.ts';
 import type { RunnerManager, RunnerStartResult } from '../runner/index.ts';
 import { writeProjectWorkflow, type WorkflowRenderResult } from '../workflow/index.ts';
@@ -133,7 +133,7 @@ async function buildManagedProject(
       teamKey: team.key,
       teamId: team.id,
       projectId: linearProject.id,
-      projectSlug: linearProject.slugId
+      projectSlug: linearProjectUrlSlug(linearProject)
     },
     repo: {
       path: repoPath,

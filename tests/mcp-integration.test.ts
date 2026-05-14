@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -130,7 +130,8 @@ test('MCP integration sets up a managed project end-to-end with defaults', async
     assert.equal(payload.setup.project.id, 'dummy-project');
     assert.equal(payload.setup.project.tracker.teamId, 'linear-team-id');
     assert.equal(payload.setup.project.tracker.projectId, 'project-id');
-    assert.equal(payload.setup.project.tracker.projectSlug, 'project-slug');
+    assert.equal(payload.setup.project.tracker.projectSlug, 'dummy-project-97e46de28c13');
+    assert.match(readFileSync(join(fixture.workspacePath, 'WORKFLOW.md'), 'utf8'), /project_slug: dummy-project-97e46de28c13/);
     assert.deepEqual(payload.setup.project.workflow, { source: 'generated', template: 'default' });
     assert.equal(payload.setup.project.symphony.command, process.execPath);
     assert.deepEqual(payload.setup.project.symphony.args, [
@@ -203,7 +204,7 @@ test('MCP integration can set up a managed project from an existing Linear proje
     const payload = toolPayload(response);
     assert.equal(payload.status, 'ok');
     assert.equal(payload.setup.project.tracker.projectId, 'existing-project-id');
-    assert.equal(payload.setup.project.tracker.projectSlug, 'existing-project-slug');
+    assert.equal(payload.setup.project.tracker.projectSlug, 'existing-project-97e46de28c13');
     assert.deepEqual(calls.map((call) => call.method), ['teams', 'teams', 'team.projects']);
     assert.deepEqual(calls[1].input, { filter: { id: { eq: 'linear-team-id' } }, first: 1 });
     assert.deepEqual(calls[2].input, { filter: { id: { eq: 'existing-project-id' } }, first: 1 });
@@ -619,7 +620,7 @@ function mockLinearClient(calls: Array<{ method: string; input: Record<string, u
     },
     async createProject(input) {
       calls.push({ method: 'createProject', input });
-      return { project: { id: 'project-id', name: String(input.name), slugId: 'project-slug', url: 'https://linear.example/project' } };
+      return { project: { id: 'project-id', name: String(input.name), slugId: '97e46de28c13', url: 'https://linear.example/project/dummy-project-97e46de28c13' } };
     },
     async createIssue(input) {
       calls.push({ method: 'createIssue', input });
@@ -656,8 +657,8 @@ function mockLinearClient(calls: Array<{ method: string; input: Record<string, u
                 nodes: [{
                   id: 'existing-project-id',
                   name: 'Existing Project',
-                  slugId: 'existing-project-slug',
-                  url: 'https://linear.example/existing-project'
+                  slugId: '97e46de28c13',
+                  url: 'https://linear.example/project/existing-project-97e46de28c13'
                 }]
               };
             }
@@ -667,7 +668,7 @@ function mockLinearClient(calls: Array<{ method: string; input: Record<string, u
                   id: 'existing-name-project-id',
                   name: 'Existing Name Project',
                   slugId: 'existing-name-project-slug',
-                  url: 'https://linear.example/existing-name-project'
+                  url: 'https://linear.example/project/existing-name-project-slug'
                 }]
               };
             }

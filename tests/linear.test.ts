@@ -125,6 +125,23 @@ test('Linear service resolves project slug metadata when create payload omits it
   assert.deepEqual(projectQueries[0], { filter: { id: { eq: 'project-1' } }, first: 1 });
 });
 
+test('Linear service resolves a human-readable project URL slug by slugId suffix', async () => {
+  const projectQueries: Record<string, unknown>[] = [];
+  const service = createLinearService({
+    client: fakeClient({
+      async projects(variables) {
+        projectQueries.push(variables ?? {});
+        return { nodes: [{ id: 'project-1', name: 'Meta', slugId: '97e46de28c13', url: 'https://linear.app/acme/project/dummy-97e46de28c13' }] };
+      }
+    })
+  });
+
+  const project = await service.resolveProjectSlug('dummy-97e46de28c13');
+
+  assert.equal(project?.slugId, '97e46de28c13');
+  assert.deepEqual(projectQueries[0], { filter: { slugId: { eq: '97e46de28c13' } }, first: 1 });
+});
+
 test('Linear service finds projects by case-insensitive name substring and slug', async () => {
   const projectQueries: Record<string, unknown>[] = [];
   const service = createLinearService({
