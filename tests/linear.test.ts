@@ -163,6 +163,39 @@ test('Linear service finds projects by case-insensitive name substring and slug'
   }]);
 });
 
+test('Linear service resolves project team from SDK lazy teams relation', async () => {
+  const projectTeamQueries: Record<string, unknown>[] = [];
+  const service = createLinearService({
+    client: fakeClient({
+      async projects() {
+        return {
+          nodes: [{
+            id: 'project-1',
+            name: 'Symphony',
+            slugId: 'symphony',
+            url: 'https://linear.app/mrboo/project/symphony',
+            async teams(variables) {
+              projectTeamQueries.push(variables ?? {});
+              return { nodes: [{ id: 'team-1', key: 'MRB' }] };
+            }
+          }]
+        };
+      }
+    })
+  });
+
+  const projects = await service.findProjects({ name: 'Symphony' });
+
+  assert.deepEqual(projectTeamQueries, [{ first: 1 }]);
+  assert.deepEqual(projects, [{
+    id: 'project-1',
+    name: 'Symphony',
+    slugId: 'symphony',
+    url: 'https://linear.app/mrboo/project/symphony',
+    teamId: 'team-1'
+  }]);
+});
+
 test('Linear service creates issues in Backlog by default and can move state', async () => {
   const created: Record<string, unknown>[] = [];
   const updated: Array<{ id: string; input: Record<string, unknown> }> = [];
