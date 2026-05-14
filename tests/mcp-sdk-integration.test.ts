@@ -142,6 +142,49 @@ test('SDK MCP Linear planning tools use mocked service boundaries', async () => 
   }
 });
 
+test('SDK MCP setup_project matches compatibility tool behavior', async () => {
+  const fixture = createProjectFixture('mrb71-sdk-setup-');
+  const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+  const runnerCalls: string[] = [];
+
+  try {
+    const runtime = runtimeFor(fixture.configPath, {
+      createLinearService: () => new LinearService({ client: mockLinearClient(calls) }),
+      createRunnerManager: () => mockRunnerManager(runnerCalls)
+    });
+    const sdk = await createSdkHarness(runtime);
+    try {
+      const payload = toolPayload(await sdk.client.callTool({
+        name: 'setup_project',
+        arguments: {
+          name: 'SDK Project',
+          teamKey: 'MRB',
+          repoPath: fixture.project.repo.path,
+          runnerPort: fixture.project.symphony.runnerPort,
+          workspaceRoot: fixture.project.symphony.workspaceRoot,
+          logsRoot: fixture.project.symphony.logsRoot,
+          startRunner: true
+        }
+      }));
+
+      assert.equal(payload.status, 'ok');
+      assert.equal(payload.setup.project.id, 'sdk-project');
+      assert.deepEqual(payload.setup.steps.map((step: { name: string; status: string }) => `${step.name}:${step.status}`), [
+        'linearProject:ok',
+        'registry:ok',
+        'workflow:ok',
+        'runner:ok'
+      ]);
+      assert.deepEqual(calls.map((call) => call.method), ['teams', 'createProject']);
+      assert.deepEqual(runnerCalls, ['start:sdk-project']);
+    } finally {
+      await sdk.close();
+    }
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test('SDK MCP runner lifecycle tools use mocked runner and setup probes', async () => {
   const fixture = createProjectFixture('mrb27-sdk-runner-');
   const runnerCalls: string[] = [];

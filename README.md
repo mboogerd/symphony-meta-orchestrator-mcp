@@ -119,6 +119,20 @@ runner command, or non-executable runner command path. Set
 `validateLinear: true` to MCP `validate_project`, to require `LINEAR_API_KEY`
 and validate Linear-specific registry fields.
 
+### Guided MCP project setup
+
+The MCP `setup_project` tool provides the managed-project happy path in one
+call. It accepts `name`, `teamKey`, `repoPath`, `runnerPort`, `workspaceRoot`,
+`logsRoot`, and optional `startRunner`. The tool resolves the Linear team,
+creates the Linear project, stores a registry entry with the documented
+defaults, renders `WORKFLOW.md`, and starts the runner when requested.
+
+The response includes `setup.project`, `setup.linearProject`, `setup.team`,
+`setup.workflow`, optional `setup.runner`, and ordered `setup.steps`. If a later
+step fails after earlier work succeeded, the response is returned as an
+`invalid` tool result with the completed outputs preserved and the failing step
+containing a structured error.
+
 ### Runner readiness and lifecycle
 
 `runner start` no longer treats a spawned PID as healthy on its own. After the

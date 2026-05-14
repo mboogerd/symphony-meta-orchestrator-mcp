@@ -95,6 +95,84 @@ test('MCP integration creates planned Backlog issues and Linear dependencies wit
   }
 });
 
+test('MCP integration sets up a managed project end-to-end with defaults', async () => {
+  const fixture = createProjectFixture('mrb71-setup-');
+  const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+  const runnerCalls: string[] = [];
+
+  try {
+    const runtime = runtimeFor(fixture.configPath, {
+      createLinearService: () => new LinearService({ client: mockLinearClient(calls) }),
+      createRunnerManager: () => mockRunnerManager(runnerCalls)
+    });
+
+    const response = await callTool(runtime, 'setup', 'setup_project', {
+      name: 'Dummy Project',
+      teamKey: 'MRB',
+      repoPath: fixture.repoPath,
+      runnerPort: fixture.project.symphony.runnerPort,
+      workspaceRoot: fixture.workspacePath,
+      logsRoot: fixture.logsPath,
+      startRunner: true
+    });
+
+    assertJsonRpcOk(response, 'setup');
+    const payload = toolPayload(response);
+    assert.equal(payload.status, 'ok');
+    assert.deepEqual(payload.setup.steps.map((step: { name: string; status: string }) => `${step.name}:${step.status}`), [
+      'linearProject:ok',
+      'registry:ok',
+      'workflow:ok',
+      'runner:ok'
+    ]);
+    assert.equal(payload.setup.project.id, 'dummy-project');
+    assert.equal(payload.setup.project.tracker.teamId, 'linear-team-id');
+    assert.equal(payload.setup.project.tracker.projectId, 'project-id');
+    assert.equal(payload.setup.project.tracker.projectSlug, 'project-slug');
+    assert.equal(payload.setup.workflow.workflowPath, join(fixture.workspacePath, 'WORKFLOW.md'));
+    assert.equal(payload.setup.runner.status.state, 'running');
+    assert.deepEqual(calls.map((call) => call.method), ['teams', 'createProject']);
+    assert.deepEqual(runnerCalls, ['start:dummy-project']);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('MCP integration returns partial setup details when workflow generation fails', async () => {
+  const fixture = createProjectFixture('mrb71-partial-', { writeWorkflow: false });
+  const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+
+  try {
+    const runtime = runtimeFor(fixture.configPath, {
+      createLinearService: () => new LinearService({ client: mockLinearClient(calls) })
+    });
+
+    const response = await callTool(runtime, 'setup', 'setup_project', {
+      name: 'Partial Project',
+      teamKey: 'MRB',
+      repoPath: fixture.repoPath,
+      runnerPort: fixture.project.symphony.runnerPort,
+      workspaceRoot: fixture.workspacePath,
+      logsRoot: fixture.logsPath
+    });
+
+    assertJsonRpcOk(response, 'setup');
+    const result = response.result as Record<string, unknown>;
+    assert.equal(result.isError, true);
+    const payload = toolPayload(response);
+    assert.equal(payload.status, 'invalid');
+    assert.equal(payload.setup.project.id, 'partial-project');
+    assert.deepEqual(payload.setup.steps.map((step: { name: string; status: string }) => `${step.name}:${step.status}`), [
+      'linearProject:ok',
+      'registry:ok',
+      'workflow:error'
+    ]);
+    assert.equal(payload.setup.steps[2].error.name, 'WorkflowSetupValidationError');
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test('MCP integration returns structured tool error when a workflow template is missing', async () => {
   const fixture = createProjectFixture('mrb20-missing-workflow-', { writeWorkflow: false });
 
