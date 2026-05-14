@@ -185,7 +185,7 @@ test('SDK MCP setup_project matches compatibility tool behavior', async () => {
         arguments: {
           name: 'SDK Project',
           teamKey: 'MRB',
-          repoPath: fixture.project.repo.path,
+          githubUrl: fixture.project.repo.remoteUrl,
           runnerPort: fixture.project.symphony.runnerPort,
           workspaceRoot: fixture.project.symphony.workspaceRoot,
           logsRoot: fixture.project.symphony.logsRoot,
@@ -236,7 +236,7 @@ test('SDK MCP setup_project can attach an existing Linear project', async () => 
           name: 'Existing SDK Project',
           teamKey: 'MRB',
           linearProjectId: 'existing-project-id',
-          repoPath: fixture.project.repo.path,
+          githubUrl: fixture.project.repo.remoteUrl,
           runnerPort: fixture.project.symphony.runnerPort,
           workspaceRoot: fixture.project.symphony.workspaceRoot,
           logsRoot: fixture.project.symphony.logsRoot

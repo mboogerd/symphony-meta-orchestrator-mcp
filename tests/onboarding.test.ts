@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import test from 'node:test';
-import { bootstrapSymphonyRunner } from '../src/services/onboarding/index.ts';
+import { bootstrapSymphonyRunner, setupManagedProject } from '../src/services/onboarding/index.ts';
 
 test('bootstrapSymphonyRunner clones the OpenAI Symphony repository by default', async () => {
   const fixture = createBootstrapFixture('mrb116-default-repo-', `#!/bin/sh
@@ -52,6 +52,68 @@ exit 128
   } finally {
     fixture.cleanup();
   }
+});
+
+test('setupManagedProject derives repo fields and default roots from githubUrl', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'mrb117-setup-'));
+  const workspaceBase = join(root, 'workspaces');
+  const logsBase = join(root, 'logs');
+  let createdProject: unknown;
+
+  try {
+    const result = await setupManagedProject({
+      name: 'Meta Orchestrator',
+      teamKey: 'MRB',
+      githubUrl: 'https://github.com/mboogerd/symphony-meta-orchestrator-mcp.git',
+      runnerPort: 4101,
+      runnerCommand: 'node'
+    }, {
+      env: {
+        DEFAULT_SYMPHONY_WORKSPACES: workspaceBase,
+        DEFAULT_SYMPHONY_LOGS: logsBase
+      },
+      linear: fakeLinear(),
+      registry: {
+        create: async (project: unknown) => {
+          createdProject = project;
+          return project as never;
+        }
+      } as never,
+      runnerManager: { start: async () => ({}) } as never
+    });
+
+    assert.equal(result.steps.map((step) => `${step.name}:${step.status}`).join(','), 'linearProject:ok,bootstrap:ok,registry:ok,workflow:ok,runner:skipped');
+    assert.equal(result.project?.repo.remoteUrl, 'https://github.com/mboogerd/symphony-meta-orchestrator-mcp.git');
+    assert.equal(result.project?.repo.cloneSource, 'https://github.com/mboogerd/symphony-meta-orchestrator-mcp.git');
+    assert.equal(result.project?.repo.path, join(workspaceBase, 'meta-orchestrator', 'mboogerd-symphony-meta-orchestrator-mcp'));
+    assert.equal(result.project?.symphony.workspaceRoot, join(workspaceBase, 'meta-orchestrator'));
+    assert.equal(result.project?.symphony.logsRoot, join(logsBase, 'meta-orchestrator'));
+    assert.equal(existsSync(result.project?.repo.path ?? ''), false);
+    assert.equal(createdProject, result.project);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('setupManagedProject falls back to OS temp roots when roots are omitted', async () => {
+  const result = await setupManagedProject({
+    name: 'Temp Root Project',
+    teamKey: 'MRB',
+    githubUrl: 'git@github.com:mboogerd/example.git',
+    runnerPort: 4102,
+    runnerCommand: 'node'
+  }, {
+    env: {},
+    linear: fakeLinear(),
+    registry: {
+      create: async (project: unknown) => project as never
+    } as never,
+    runnerManager: { start: async () => ({}) } as never
+  });
+
+  assert.equal(result.project?.symphony.workspaceRoot, join(tmpdir(), 'symphony-workspaces', 'temp-root-project'));
+  assert.equal(result.project?.symphony.logsRoot, join(tmpdir(), 'symphony-logs', 'temp-root-project'));
+  assert.equal(result.project?.repo.path, join(tmpdir(), 'symphony-workspaces', 'temp-root-project', 'mboogerd-example'));
 });
 
 type BootstrapFixture = {
@@ -108,4 +170,13 @@ function restoreEnv(name: string, value: string | undefined): void {
   } else {
     process.env[name] = value;
   }
+}
+
+function fakeLinear() {
+  return {
+    resolveTeam: async () => ({ id: 'team-1', key: 'MRB', name: 'Mr Boo' }),
+    findProjectByNameForTeam: async () => ({ id: 'project-1', name: 'Meta Orchestrator', url: 'https://linear.app/mrboo/project/meta-orchestrator-abc123' }),
+    createProject: async () => ({ id: 'project-1', name: 'Meta Orchestrator', url: 'https://linear.app/mrboo/project/meta-orchestrator-abc123' }),
+    resolveProjectForTeam: async () => ({ id: 'project-1', name: 'Meta Orchestrator', url: 'https://linear.app/mrboo/project/meta-orchestrator-abc123' })
+  } as never;
 }

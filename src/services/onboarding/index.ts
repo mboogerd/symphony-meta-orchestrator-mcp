@@ -1,9 +1,9 @@
 import { execFile } from 'node:child_process';
-import { constants } from 'node:fs';
-import { access, mkdir, readdir } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { mkdir, readdir } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import type { Environment } from '../../config/env.ts';
 import { linearProjectUrlSlug, type LinearProjectReference, type LinearService, type LinearTeamReference } from '../linear/index.ts';
 import type { ManagedProject, ProjectRegistryService } from '../registry/index.ts';
 import type { RunnerManager, RunnerStartResult } from '../runner/index.ts';
@@ -17,12 +17,10 @@ const SYMPHONY_GUARDRAIL_FLAG = '--i-understand-that-this-will-be-running-withou
 export type SetupProjectInput = {
   name: string;
   teamKey: string;
-  repoPath: string;
+  githubUrl: string;
   runnerPort: number;
-  workspaceRoot: string;
-  logsRoot: string;
-  remoteUrl?: string;
-  cloneSource?: string;
+  workspaceRoot?: string;
+  logsRoot?: string;
   runnerCommand?: string;
   runnerArgs?: string[];
   runnerCwd?: string;
@@ -53,6 +51,7 @@ export type SetupProjectServices = {
   registry: ProjectRegistryService;
   runnerManager: RunnerManager;
   runnerBootstrap?: RunnerBootstrapper;
+  env?: Environment;
 };
 
 export type RunnerBootstrapResult = {
@@ -87,7 +86,7 @@ export async function setupManagedProject(input: SetupProjectInput, services: Se
   }
 
   try {
-    runnerConfig = await resolveDefaultRunner(input, services.runnerBootstrap ?? bootstrapSymphonyRunner);
+    runnerConfig = await resolveDefaultRunner(input, services.runnerBootstrap ?? bootstrapSymphonyRunner, services.env ?? process.env);
     steps.push({ name: 'bootstrap', status: 'ok', output: { runner: runnerConfig } });
   } catch (error) {
     steps.push({ name: 'bootstrap', status: 'error', error: structuredError(error) });
@@ -95,7 +94,7 @@ export async function setupManagedProject(input: SetupProjectInput, services: Se
   }
 
   try {
-    project = await buildManagedProject(input, team, linearProject, runnerConfig);
+    project = await buildManagedProject(input, team, linearProject, runnerConfig, services.env ?? process.env);
     project = await services.registry.create(project);
     steps.push({ name: 'registry', status: 'ok', output: { project } });
   } catch (error) {
@@ -104,7 +103,6 @@ export async function setupManagedProject(input: SetupProjectInput, services: Se
   }
 
   try {
-    await mkdir(project.repo.path, { recursive: true });
     workflow = await writeProjectWorkflow(project);
     steps.push({ name: 'workflow', status: 'ok', output: { workflow } });
   } catch (error) {
@@ -131,15 +129,18 @@ async function buildManagedProject(
   input: SetupProjectInput,
   team: LinearTeamReference,
   linearProject: LinearProjectReference,
-  runner: RunnerBootstrapResult
+  runner: RunnerBootstrapResult,
+  env: Environment
 ): Promise<ManagedProject> {
-  const repoPath = resolve(input.repoPath);
-  const workspaceRoot = resolve(input.workspaceRoot);
-  const logsRoot = resolve(input.logsRoot);
-  const repoRemote = input.remoteUrl ?? input.cloneSource ?? await resolveRepoRemote(repoPath);
+  const githubUrl = normalizeGithubUrl(input.githubUrl);
+  const projectSlug = slugify(input.name);
+  const repoSlug = githubRepoSlug(githubUrl);
+  const workspaceRoot = resolve(input.workspaceRoot ?? join(env.DEFAULT_SYMPHONY_WORKSPACES ?? join(tmpdir(), 'symphony-workspaces'), projectSlug));
+  const logsRoot = resolve(input.logsRoot ?? join(env.DEFAULT_SYMPHONY_LOGS ?? join(tmpdir(), 'symphony-logs'), projectSlug));
+  const repoPath = join(workspaceRoot, repoSlug);
 
   return {
-    id: slugify(input.name),
+    id: projectSlug,
     name: input.name,
     tracker: {
       kind: 'linear',
@@ -150,9 +151,9 @@ async function buildManagedProject(
     },
     repo: {
       path: repoPath,
-      remoteUrl: input.remoteUrl ?? repoRemote ?? repoPath,
+      remoteUrl: githubUrl,
       defaultBranch: 'main',
-      cloneSource: input.cloneSource ?? repoRemote ?? repoPath
+      cloneSource: githubUrl
     },
     workflow: {
       source: 'generated',
@@ -177,66 +178,27 @@ async function buildManagedProject(
   };
 }
 
-async function resolveRepoRemote(repoPath: string): Promise<string | undefined> {
-  if (!await isGitRepo(repoPath)) {
-    return undefined;
-  }
-
-  try {
-    const { stdout } = await execFileAsync('git', ['-C', repoPath, 'remote', 'get-url', 'origin']);
-    const remoteUrl = stdout.trim();
-    if (remoteUrl.length > 0) {
-      return remoteUrl;
-    }
-  } catch {
-    // Fall through to the actionable setup error below.
-  }
-
-  throw new SetupProjectValidationError(
-    'repo_remote_missing',
-    'repo.remoteUrl',
-    `Git origin remote is not configured for ${repoPath}; run git remote add origin <url>, pass setup_project remoteUrl and cloneSource, or register the project with explicit repo.remoteUrl and repo.cloneSource.`
-  );
-}
-
-async function isGitRepo(repoPath: string): Promise<boolean> {
-  try {
-    await access(resolve(repoPath, '.git'));
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function resolveDefaultRunner(input: SetupProjectInput, runnerBootstrap: RunnerBootstrapper): Promise<RunnerBootstrapResult> {
-  const repoPath = resolve(input.repoPath);
+async function resolveDefaultRunner(input: SetupProjectInput, runnerBootstrap: RunnerBootstrapper, env: Environment): Promise<RunnerBootstrapResult> {
+  const defaultCwd = resolve(input.runnerCwd ?? process.cwd());
   const commandInput = input.runnerCommand?.trim();
   if (commandInput !== undefined && commandInput.length > 0) {
     return {
       command: commandInput,
       args: input.runnerArgs ?? [SYMPHONY_GUARDRAIL_FLAG],
-      cwd: input.runnerCwd !== undefined ? resolve(input.runnerCwd) : repoPath
+      cwd: defaultCwd
     };
   }
 
-  const commandOverride = process.env.SYMPHONY_RUNNER_COMMAND?.trim();
+  const commandOverride = env.SYMPHONY_RUNNER_COMMAND?.trim();
   if (commandOverride !== undefined && commandOverride.length > 0) {
     return {
       command: commandOverride,
       args: [SYMPHONY_GUARDRAIL_FLAG],
-      cwd: repoPath
+      cwd: defaultCwd
     };
   }
 
-  if (await executableExists(join(repoPath, 'bin', 'symphony'))) {
-    return {
-      command: 'mise',
-      args: ['exec', '--', './bin/symphony', SYMPHONY_GUARDRAIL_FLAG],
-      cwd: repoPath
-    };
-  }
-
-  return runnerBootstrap(repoPath);
+  return runnerBootstrap(defaultCwd);
 }
 
 export async function bootstrapSymphonyRunner(_repoPath: string): Promise<RunnerBootstrapResult> {
@@ -279,15 +241,6 @@ class SymphonyRunnerBootstrapError extends Error {
   }
 }
 
-async function executableExists(path: string): Promise<boolean> {
-  try {
-    await access(path, constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 async function directoryHasEntries(path: string): Promise<boolean> {
   try {
     return (await readdir(path)).length > 0;
@@ -320,6 +273,31 @@ class SetupProjectValidationError extends Error {
 function slugify(value: string): string {
   const slug = value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   return slug.length > 0 ? slug : basename(process.cwd());
+}
+
+function normalizeGithubUrl(value: string): string {
+  const input = value.trim();
+  if (input.length === 0) {
+    throw new SetupProjectValidationError('github_url_missing', 'githubUrl', 'githubUrl is required.');
+  }
+
+  if (/^https:\/\/github\.com\/[^/\s]+\/[^/\s]+(?:\.git)?$/i.test(input) || /^git@github\.com:[^/\s]+\/[^/\s]+(?:\.git)?$/i.test(input)) {
+    return input;
+  }
+
+  throw new SetupProjectValidationError(
+    'github_url_invalid',
+    'githubUrl',
+    'githubUrl must be a GitHub repository URL, for example https://github.com/org/repo.git or git@github.com:org/repo.git.'
+  );
+}
+
+function githubRepoSlug(githubUrl: string): string {
+  const match = githubUrl.match(/github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?$/i);
+  if (match === null) {
+    return slugify(githubUrl);
+  }
+  return slugify(`${match[1]}-${match[2]}`);
 }
 
 function structuredError(error: unknown): Record<string, unknown> {

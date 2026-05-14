@@ -69,6 +69,8 @@ SYMPHONY_CONFIG_PATH=./symphony.registry.yaml
 SYMPHONY_LOG_LEVEL=info
 LINEAR_API_KEY=<linear-api-key>
 SYMPHONY_RUNNER_COMMAND="node"
+DEFAULT_SYMPHONY_WORKSPACES=/path/to/workspaces
+DEFAULT_SYMPHONY_LOGS=/path/to/logs
 SYMPHONY_RUNNER_READINESS_TIMEOUT_MS=30000
 SYMPHONY_RUNNER_READINESS_POLL_INTERVAL_MS=500
 ```
@@ -80,6 +82,8 @@ launch a known local executable instead of the registry command. Runner launch
 arguments are not parsed from this environment variable; configure stable
 arguments with `symphony.args` in the registry so they are passed to `spawn` as
 structured argv entries.
+`DEFAULT_SYMPHONY_WORKSPACES` and `DEFAULT_SYMPHONY_LOGS` are optional
+`setup_project` roots; when omitted, the MCP server uses OS temp directories.
 `SYMPHONY_RUNNER_READINESS_TIMEOUT_MS` controls how long `runner start` waits
 for the configured dashboard/API URL to respond before reporting the runner as
 unhealthy. `SYMPHONY_RUNNER_READINESS_POLL_INTERVAL_MS` controls the polling
@@ -103,6 +107,9 @@ to the `workspace` phase, which checks registry/schema data, workflow
 renderability, repository metadata, writable workspace/log roots, and Codex
 policy without probing the live runner command or TCP port. Use CLI `--live`,
 MCP `live: true`, or MCP `phase: "live"` when you need full runner readiness.
+Live validation checks that the runner command exists and the port is available;
+it also runs a short warning-only command compatibility probe, but it does not
+guarantee that every runner argument is valid for full startup.
 Workflow rendering also uses non-live validation, so an occupied runner port does
 not block writing `WORKFLOW.md`; `runner start` always performs live checks.
 Each project result includes `phase` and `phases` fields to show which phase was
@@ -122,21 +129,27 @@ and validate Linear-specific registry fields.
 ### Guided MCP project setup
 
 The MCP `setup_project` tool provides the managed-project happy path in one
-call. It accepts `name`, `teamKey`, `repoPath`, `runnerPort`, `workspaceRoot`,
-`logsRoot`, optional `linearProjectId`, optional runner configuration
-(`runnerCommand`, `runnerArgs`, and `runnerCwd`), and optional `startRunner`.
+call. It accepts `name`, `teamKey`, required `githubUrl`, `runnerPort`,
+optional `workspaceRoot`, optional `logsRoot`, optional `linearProjectId`,
+optional runner configuration (`runnerCommand`, `runnerArgs`, and `runnerCwd`),
+and optional `startRunner`.
 The tool resolves the Linear team, attaches an existing same-name Linear project
 in that team or creates one when none exists, validates any supplied Linear
 project belongs to that team, resolves or bootstraps the runner, stores a
 registry entry with the documented defaults, renders `WORKFLOW.md`, and starts
 the runner when requested.
 
+When omitted, `workspaceRoot` resolves to
+`$DEFAULT_SYMPHONY_WORKSPACES/<project-slug>` or
+`<os.tmpdir()>/symphony-workspaces/<project-slug>`, and `logsRoot` resolves to
+`$DEFAULT_SYMPHONY_LOGS/<project-slug>` or
+`<os.tmpdir()>/symphony-logs/<project-slug>`.
+
 When `runnerCommand` is provided, `setup_project` uses it for the managed
 project's Symphony runner command. `runnerArgs` defaults to the unattended
-guardrail acknowledgement flag when omitted, and `runnerCwd` defaults to
-`repoPath`. Without an explicit `runnerCommand`, the tool first honors
-`SYMPHONY_RUNNER_COMMAND`, then uses an executable `bin/symphony` inside the
-target repository, and finally bootstraps a managed Symphony checkout. The
+guardrail acknowledgement flag when omitted, and `runnerCwd` defaults to the MCP
+server working directory. Without an explicit `runnerCommand`, the tool first
+honors `SYMPHONY_RUNNER_COMMAND`, and finally bootstraps a managed Symphony checkout. The
 managed checkout source defaults to the built-in repository URL and can be
 overridden with `SYMPHONY_RUNNER_REPOSITORY`; the install directory can be
 overridden with `SYMPHONY_RUNNER_INSTALL_DIR`.

@@ -164,12 +164,10 @@ function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void
     inputSchema: {
       name: requiredString,
       teamKey: requiredString,
-      repoPath: requiredString,
+      githubUrl: requiredString,
       runnerPort,
-      workspaceRoot: requiredString,
-      logsRoot: requiredString,
-      remoteUrl: optionalString,
-      cloneSource: optionalString,
+      workspaceRoot: optionalString,
+      logsRoot: optionalString,
       runnerCommand: optionalString,
       runnerArgs: z.array(requiredString).optional(),
       runnerCwd: optionalString,
@@ -181,7 +179,8 @@ function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void
       linear: linear(runtime),
       registry: registry(runtime),
       runnerManager: runnerManager(runtime),
-      runnerBootstrap: runtime.mcpServices?.runnerBootstrap
+      runnerBootstrap: runtime.mcpServices?.runnerBootstrap,
+      env: runtime.env
     });
     return toolResult({ setup }, setup.steps.some((step) => step.status === 'error'));
   }));

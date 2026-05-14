@@ -11,7 +11,7 @@ export const projectSchemaGuidance = {
   },
   notes: [
     'Use describe_project_schema to fetch this annotated template from the MCP server.',
-    'Use setup_project with name, teamKey, repoPath, runnerPort, workspaceRoot, and logsRoot to generate this object from defaults.',
+    'Use setup_project with name, teamKey, githubUrl, and runnerPort to generate this object from defaults.',
     'For workflow.source=repo, provide workflow.path. For workflow.source=generated, provide workflow.template.'
   ]
 } as const;
