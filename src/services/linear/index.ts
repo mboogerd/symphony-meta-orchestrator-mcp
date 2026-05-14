@@ -116,6 +116,7 @@ export type LinearServiceOptions = {
 };
 
 type MaybePromise<T> = T | Promise<T>;
+type MaybeLazy<T> = MaybePromise<T> | (() => MaybePromise<T>);
 
 export type LinearSdkClient = {
   issue(id: string): Promise<LinearIssueLike | undefined>;
@@ -129,7 +130,7 @@ export type LinearSdkClient = {
   workflowStates(variables?: Record<string, unknown>): Promise<LinearConnection<LinearWorkflowStateLike>>;
 };
 
-type LinearPayload<Key extends string, Value> = { success?: boolean } & { [K in Key]?: MaybePromise<Value> };
+type LinearPayload<Key extends string, Value> = { success?: boolean } & { [K in Key]?: MaybeLazy<Value> };
 type LinearConnection<Node> = { nodes: Node[] };
 type LinearTeamLike = { id: string; key?: string; name?: string; description?: string };
 type LinearProjectLike = {
@@ -566,8 +567,9 @@ function requireEntity<T>(entity: T | undefined, path: string, operation: string
   return entity;
 }
 
-async function requirePayloadEntity<T>(entity: MaybePromise<T | undefined> | undefined, path: string, operation: string): Promise<T> {
-  return requireEntity(await entity, path, operation);
+async function requirePayloadEntity<T>(entity: MaybeLazy<T | undefined> | undefined, path: string, operation: string): Promise<T> {
+  const resolved = typeof entity === 'function' ? await entity() : await entity;
+  return requireEntity(resolved, path, operation);
 }
 
 function requireString(value: unknown, path: string, operation: string): string {
