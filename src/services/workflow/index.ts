@@ -31,6 +31,7 @@ export type WorkflowSetupIssueCode =
   | 'linear_token_missing'
   | 'linear_project_slug_missing'
   | 'runner_command_missing'
+  | 'runner_command_probe_failed'
   | 'runner_cwd_missing'
   | 'runner_command_not_executable'
   | 'runner_port_unavailable'
@@ -376,12 +377,15 @@ async function validateRunner(
   portAvailable: PortAvailabilityProbe
 ): Promise<void> {
   const cwd = resolve(project.symphony.cwd ?? workspaceRoot);
+  let blockingRunnerIssues = 0;
   try {
     const cwdStat = await stat(cwd);
     if (!cwdStat.isDirectory()) {
+      blockingRunnerIssues += 1;
       addIssue({ code: 'runner_cwd_missing', field: 'symphony.cwd', message: 'Runner cwd is not a directory', path: cwd });
     }
   } catch {
+    blockingRunnerIssues += 1;
     addIssue({ code: 'runner_cwd_missing', field: 'symphony.cwd', message: 'Runner cwd does not exist', path: cwd });
   }
 
@@ -389,11 +393,13 @@ async function validateRunner(
     try {
       await access(resolve(project.symphony.command), constants.X_OK);
     } catch {
+      blockingRunnerIssues += 1;
       addIssue({ code: 'runner_command_not_executable', field: 'symphony.command', message: 'Runner command path is not executable', path: resolve(project.symphony.command) });
     }
   } else {
     const found = await commandExists(project.symphony.command);
     if (!found) {
+      blockingRunnerIssues += 1;
       addIssue({
         code: 'runner_command_missing',
         field: 'symphony.command',
@@ -404,7 +410,12 @@ async function validateRunner(
 
   const isAvailable = await portAvailable(project.symphony.runnerPort);
   if (!isAvailable) {
+    blockingRunnerIssues += 1;
     addIssue({ code: 'runner_port_unavailable', field: 'symphony.runnerPort', message: `Runner port ${project.symphony.runnerPort} is already in use` });
+  }
+
+  if (blockingRunnerIssues === 0) {
+    await validateRunnerInvocation(project, cwd, addIssue);
   }
 }
 
@@ -415,6 +426,51 @@ async function commandExists(command: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function validateRunnerInvocation(project: ManagedProject, cwd: string, addIssue: AddWorkflowSetupIssue): Promise<void> {
+  const args = [...(project.symphony.args ?? []), '--help'];
+  try {
+    await execFileAsync(project.symphony.command, args, {
+      cwd,
+      timeout: 2_000,
+      windowsHide: true
+    });
+  } catch (error) {
+    if (isExecTimeout(error)) {
+      return;
+    }
+
+    addIssue({
+      code: 'runner_command_probe_failed',
+      field: 'symphony.command',
+      message: `Runner command exited during live probe. Live validation checks command existence and performs a warning-only compatibility probe, but does not guarantee full startup readiness. ${formatExecFailure(error)}`
+    }, 'warning');
+  }
+}
+
+function isExecTimeout(error: unknown): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && 'killed' in error
+    && error.killed === true
+    && 'signal' in error
+    && error.signal === 'SIGTERM';
+}
+
+function formatExecFailure(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return String(error);
+  }
+
+  const stderr = 'stderr' in error && typeof error.stderr === 'string' ? error.stderr.trim() : '';
+  const stdout = 'stdout' in error && typeof error.stdout === 'string' ? error.stdout.trim() : '';
+  const excerpt = firstLine(stderr.length > 0 ? stderr : stdout);
+  return excerpt.length > 0 ? excerpt : error.message;
+}
+
+function firstLine(value: string): string {
+  return value.split(/\r?\n/, 1)[0] ?? '';
 }
 
 function isPortAvailable(port: number): Promise<boolean> {

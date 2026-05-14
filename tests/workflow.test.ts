@@ -370,6 +370,36 @@ test('live validation detects unavailable runner port', async () => {
   }
 });
 
+test('live validation warns when runner command exits during compatibility probe', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb115-runner-probe-'));
+  const repoPath = join(cwd, 'repo');
+  const runnerPort = 42_110 + Math.trunc(Math.random() * 1000);
+
+  try {
+    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    writeFileSync(join(repoPath, 'WORKFLOW.md'), 'Prompt body.');
+    const project = managedProject({
+      repoPath,
+      workspaceRoot: join(cwd, 'workspace'),
+      logsRoot: join(cwd, 'logs'),
+      runnerPort,
+      command: process.execPath,
+      args: ['--i-understand-that-this-will-be-running-without-the-usual-guardrails', '--port', String(runnerPort)]
+    });
+
+    const validation = await validateProjectWorkflowSetup(project, { phase: 'live' });
+
+    assert.equal(validation.ok, true);
+    assert.equal(validation.subsystems.runner.ok, true);
+    assert.equal(validation.subsystems.runner.errors.length, 0);
+    assert.equal(validation.subsystems.runner.warnings[0]?.code, 'runner_command_probe_failed');
+    assert.equal(validation.phases.live.warnings[0]?.code, 'runner_command_probe_failed');
+    assert.match(validation.subsystems.runner.warnings[0]?.message ?? '', /bad option: --i-understand-that-this-will-be-running-without-the-usual-guardrails/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test('live validation detects missing runner command and render validation detects read-only turn sandbox', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'mrb17-command-policy-'));
   const repoPath = join(cwd, 'repo');
