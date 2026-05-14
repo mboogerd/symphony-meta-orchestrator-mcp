@@ -44,6 +44,7 @@ export type CreateLinearIssueInput = {
 export type CreateLinearIssueBatchInput = {
   issues: CreateLinearIssueInput[];
 };
+export type CreateLinearIssueBatchServiceInput = CreateLinearIssueBatchInput | CreateLinearIssueInput[];
 
 export type CreateLinearDependencyInput = {
   blockingIssueId: string;
@@ -196,7 +197,7 @@ export class LinearService {
         priority: input.priority,
         labelIds: input.labelIds
       });
-      return toIssueReference(await requirePayloadEntity(payload.issue, 'issue', 'create_issue'));
+      return this.toIssueReference(await requirePayloadEntity(payload.issue, 'issue', 'create_issue'), 'create_issue');
     });
   }
 
@@ -208,9 +209,10 @@ export class LinearService {
     });
   }
 
-  async createIssueBatch(input: CreateLinearIssueBatchInput): Promise<LinearIssueReference[]> {
+  async createIssueBatch(input: CreateLinearIssueBatchServiceInput): Promise<LinearIssueReference[]> {
     return this.wrap('create_issue_batch', async () => {
-      const issues = await Promise.all(input.issues.map(async (issue) => {
+      const inputIssues = Array.isArray(input) ? input : input.issues;
+      const issues = await Promise.all(inputIssues.map(async (issue) => {
         const teamId = issue.teamId ?? await this.findTeamId(issue.teamKey);
         const stateId = issue.stateId ?? await this.findStateId(teamId, issue.stateName ?? 'Backlog');
         return {
@@ -226,7 +228,7 @@ export class LinearService {
       }));
       const payload = await this.client.createIssueBatch({ issues });
       const createdIssues = await requirePayloadEntity(payload.issues, 'issues', 'create_issue_batch');
-      return Promise.all(createdIssues.map(async (issue) => toIssueReference(await issue)));
+      return Promise.all(createdIssues.map(async (issue) => this.toIssueReference(await issue, 'create_issue_batch')));
     });
   }
 
@@ -315,7 +317,7 @@ export class LinearService {
     return this.wrap('move_issue_state', async () => {
       const stateId = isUuidLike(stateNameOrId) ? stateNameOrId : await this.findStateId(teamId, stateNameOrId);
       const payload = await this.client.updateIssue(issueId, { stateId });
-      return toIssueReference(await requirePayloadEntity(payload.issue, 'issue', 'move_issue_state'));
+      return this.toIssueReference(await requirePayloadEntity(payload.issue, 'issue', 'move_issue_state'), 'move_issue_state');
     });
   }
 
@@ -406,6 +408,15 @@ export class LinearService {
     };
   }
 
+  private async toIssueReference(issue: LinearIssueLike, operation: string): Promise<LinearIssueReference> {
+    const hydrated = issue.url === undefined ? { ...issue, ...await requirePayloadEntity(this.client.issue(issue.id), 'issue', operation) } : issue;
+    return {
+      id: hydrated.id,
+      identifier: hydrated.identifier,
+      url: requireString(hydrated.url, 'issue.url', operation)
+    };
+  }
+
   private async wrap<T>(operation: string, action: () => Promise<T>): Promise<T> {
     try {
       return await action();
@@ -425,14 +436,6 @@ export function createLinearService(options: LinearServiceOptions = {}): LinearS
 
 export function formatLinearIssueReference(issue: LinearIssueReference): string {
   return `${issue.identifier} (${issue.url})`;
-}
-
-function toIssueReference(issue: LinearIssueLike): LinearIssueReference {
-  return {
-    id: issue.id,
-    identifier: issue.identifier,
-    url: requireString(issue.url, 'issue.url', 'issue')
-  };
 }
 
 function requireEntity<T>(entity: T | undefined, path: string, operation: string): T {
