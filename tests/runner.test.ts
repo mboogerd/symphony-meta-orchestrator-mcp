@@ -1,12 +1,53 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import test from 'node:test';
-import { createRunnerManager } from '../src/index.ts';
+import { allocatePort, createRunnerManager, type ManagedProject } from '../src/index.ts';
 import { managedProject, managedProjectYaml } from './project-fixtures.ts';
+
+type ManagedProjectWithLegacyRunner = ManagedProject & {
+  symphony: {
+    runnerPort?: number;
+  };
+};
+
+test('allocatePort returns first free port starting from default', async () => {
+  const startPort = 40_001;
+  const server = createServer();
+
+  try {
+    await new Promise<void>((resolvePromise, reject) => {
+      server.once('error', reject);
+      server.listen(startPort, '127.0.0.1', resolvePromise);
+    });
+
+    assert.equal(await allocatePort(startPort), startPort + 1);
+  } finally {
+    await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
+  }
+});
+
+test('allocatePort throws when range is exhausted', async () => {
+  const startPort = 40_101;
+  const servers = Array.from({ length: 10 }, () => createServer());
+
+  try {
+    await Promise.all(servers.map((server, index) => new Promise<void>((resolvePromise, reject) => {
+      server.once('error', reject);
+      server.listen(startPort + index, '127.0.0.1', resolvePromise);
+    })));
+
+    await assert.rejects(
+      allocatePort(startPort, { maxAttempts: 10 }),
+      /No available runner port found starting at 40101 after 10 attempts/
+    );
+  } finally {
+    await Promise.all(servers.map((server) => new Promise<void>((resolvePromise) => server.close(() => resolvePromise()))));
+  }
+});
 
 test('runner manager starts, reports, prevents duplicate starts, stops, and restarts one project process', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'mrb10-runner-'));
@@ -53,6 +94,43 @@ test('runner manager starts, reports, prevents duplicate starts, stops, and rest
     assert.equal(restarted.started, true);
     assert.equal(restarted.status.state, 'running');
     assert.notEqual(restarted.status.pid, started.status.pid);
+
+    await manager.stop(project);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('runner manager dynamically allocates and persists a port when registry omits runnerPort', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb120-runner-dynamic-port-'));
+  const repoPath = join(cwd, 'repo');
+  const workspacePath = join(cwd, 'workspace');
+  const logsPath = join(cwd, 'logs');
+
+  try {
+    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    writeFileSync(join(repoPath, 'WORKFLOW.md'), ['---', 'tracker:', '  kind: linear', '---', '', 'Prompt body.'].join('\n'));
+    const project = managedProject({ repoPath, workspaceRoot: workspacePath, logsRoot: logsPath });
+    delete (project as ManagedProjectWithLegacyRunner).symphony.runnerPort;
+    const expectedPort = await allocatePort(4001);
+    const manager = createRunnerManager({
+      command: process.execPath,
+      commandArgs: readyNodeRunnerArgs(project.id),
+      readinessPollIntervalMs: 10
+    });
+
+    const started = await manager.start(project);
+
+    assert.equal(started.status.state, 'running');
+    assert.equal(started.status.port, expectedPort);
+    assert.equal(started.status.dashboardUrl, `http://localhost:${expectedPort}`);
+    const state = JSON.parse(readFileSync(started.status.statePath, 'utf8'));
+    assert.equal(state.port, expectedPort);
+    assert.equal(state.dashboardUrl, `http://localhost:${expectedPort}`);
+
+    const status = await manager.status(project);
+    assert.equal(status.port, expectedPort);
+    assert.equal(status.dashboardUrl, `http://localhost:${expectedPort}`);
 
     await manager.stop(project);
   } finally {

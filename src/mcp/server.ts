@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ListResourcesRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { RuntimeConfig } from '../config/runtime.ts';
+import type { Logger } from '../logging/logger.ts';
 import { packageInfo } from '../package-info.ts';
 import { LinearProjectCache } from '../services/linear/cache.ts';
 import { createLinearService, LinearServiceError, type LinearService } from '../services/linear/index.ts';
@@ -86,6 +87,40 @@ export function createMcpServer(runtime: McpServerRuntimeConfig): McpServer {
 
   registerTools(server, runtime);
   return server;
+}
+
+export async function startAllRunners(runtime: McpServerRuntimeConfig, logger: Logger): Promise<void> {
+  const projects = await registry(runtime).list();
+  const manager = runnerManager(runtime);
+
+  for (const project of projects) {
+    try {
+      const status = await manager.status(project);
+      if (status.state === 'running' || status.state === 'starting') {
+        logger.info('runner startup skipped', {
+          projectId: project.id,
+          state: status.state,
+          pid: status.pid,
+          port: status.port
+        });
+        continue;
+      }
+
+      const started = await manager.start(project);
+      logger.info('runner startup attempted', {
+        projectId: project.id,
+        started: started.started,
+        state: started.status.state,
+        pid: started.status.pid,
+        port: started.status.port
+      });
+    } catch (error) {
+      logger.info('runner startup failed', {
+        projectId: project.id,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
 }
 
 function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void {

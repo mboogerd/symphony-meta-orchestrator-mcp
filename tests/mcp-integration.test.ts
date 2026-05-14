@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { createRuntimeConfig, handleMcpMessage, type JsonRpcResponse, type ManagedProject, type RunnerManager } from '../src/index.ts';
+import { createRuntimeConfig, handleMcpMessage, startAllRunners, type JsonRpcResponse, type ManagedProject, type RunnerManager, type RunnerProcessState } from '../src/index.ts';
 import { LinearService, type LinearSdkClient } from '../src/services/linear/index.ts';
 import { managedProject } from './project-fixtures.ts';
 
@@ -607,6 +607,85 @@ test('MCP integration reports live runner command and port failures when request
   }
 });
 
+test('MCP server startup starts idle runners for all registered projects', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'mrb120-startup-idle-'));
+  const configPath = join(root, 'registry.yaml');
+  const calls: string[] = [];
+
+  try {
+    writeFileSync(configPath, registryYaml(['alpha-project', 'beta-project']));
+    const runtime = runtimeFor(configPath, {
+      createRunnerManager: () => startupRunnerManager(calls, {
+        'alpha-project': 'idle',
+        'beta-project': 'stopped'
+      })
+    });
+
+    await startAllRunners(runtime, testLogger());
+
+    assert.deepEqual(calls, [
+      'status:alpha-project',
+      'start:alpha-project',
+      'status:beta-project',
+      'start:beta-project'
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('MCP server startup skips runners already in running state', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'mrb120-startup-running-'));
+  const configPath = join(root, 'registry.yaml');
+  const calls: string[] = [];
+
+  try {
+    writeFileSync(configPath, registryYaml(['running-project', 'starting-project']));
+    const runtime = runtimeFor(configPath, {
+      createRunnerManager: () => startupRunnerManager(calls, {
+        'running-project': 'running',
+        'starting-project': 'starting'
+      })
+    });
+
+    await startAllRunners(runtime, testLogger());
+
+    assert.deepEqual(calls, [
+      'status:running-project',
+      'status:starting-project'
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('MCP server startup continues when one runner start fails', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'mrb120-startup-failure-'));
+  const configPath = join(root, 'registry.yaml');
+  const calls: string[] = [];
+
+  try {
+    writeFileSync(configPath, registryYaml(['broken-project', 'healthy-project']));
+    const runtime = runtimeFor(configPath, {
+      createRunnerManager: () => startupRunnerManager(calls, {
+        'broken-project': 'idle',
+        'healthy-project': 'idle'
+      }, new Set(['broken-project']))
+    });
+
+    await startAllRunners(runtime, testLogger());
+
+    assert.deepEqual(calls, [
+      'status:broken-project',
+      'start:broken-project',
+      'status:healthy-project',
+      'start:healthy-project'
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('MCP integration exposes machine-readable tool errors for callers', async () => {
   const runtime = runtimeFor(join(mkdtempSync(join(tmpdir(), 'mrb20-error-')), 'registry.yaml'));
   const response = await callTool(runtime, 'missing', 'get_project', { projectId: 'missing-project' });
@@ -742,7 +821,51 @@ function mockRunnerManager(calls: string[]): RunnerManager {
   };
 }
 
-function runnerStatus(project: ManagedProject, state: 'running' | 'stopped') {
+function startupRunnerManager(
+  calls: string[],
+  states: Record<string, RunnerProcessState>,
+  startFailures = new Set<string>()
+): RunnerManager {
+  return {
+    async start(project: ManagedProject) {
+      calls.push(`start:${project.id}`);
+      if (startFailures.has(project.id)) {
+        throw new Error(`failed to start ${project.id}`);
+      }
+      return {
+        started: true,
+        status: runnerStatus(project, 'running')
+      };
+    },
+    async stop(project: ManagedProject) {
+      calls.push(`stop:${project.id}`);
+      return runnerStatus(project, 'stopped');
+    },
+    async restart(project: ManagedProject) {
+      calls.push(`restart:${project.id}`);
+      return {
+        started: true,
+        status: runnerStatus(project, 'running')
+      };
+    },
+    async status(project: ManagedProject) {
+      calls.push(`status:${project.id}`);
+      return runnerStatus(project, states[project.id] ?? 'idle');
+    },
+    async tailLogs(project: ManagedProject) {
+      calls.push(`tail:${project.id}`);
+      return {
+        id: project.id,
+        logPath: join(project.symphony.logsRoot, `${project.id}.runner.log`),
+        lines: [],
+        lineCount: 0,
+        truncated: false
+      };
+    }
+  };
+}
+
+function runnerStatus(project: ManagedProject, state: RunnerProcessState) {
   return {
     id: project.id,
     state,
@@ -760,6 +883,36 @@ function runnerStatus(project: ManagedProject, state: 'running' | 'stopped') {
       message: `Runner is ${state}`,
       checkedAt: '2026-05-08T00:00:00.000Z'
     }
+  };
+}
+
+function registryYaml(projectIds: string[]): string {
+  return [
+    'version: 3',
+    'projects:',
+    ...projectIds.flatMap((projectId) => [
+      `  - id: ${projectId}`,
+      `    name: ${projectId}`,
+      `    githubUrl: https://github.com/example/${projectId}.git`,
+      '    workflow:',
+      '      source: generated',
+      '      template: default',
+      '    codex:',
+      '      threadSandbox: workspace-write',
+      '      turnSandbox:',
+      '        type: workspaceWrite',
+      '        networkAccess: true'
+    ]),
+    ''
+  ].join('\n');
+}
+
+function testLogger() {
+  return {
+    debug() {},
+    info() {},
+    warn() {},
+    error() {}
   };
 }
 
