@@ -138,7 +138,15 @@ test('CLI workflows:render writes project workflow with required runtime front m
 
   try {
     spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
-    writeFileSync(join(repoPath, 'WORKFLOW.md'), ['---', 'tracker:', '  kind: linear', '---', '', 'Prompt body.'].join('\n'));
+    writeFileSync(join(repoPath, 'WORKFLOW.md'), [
+      '---',
+      'tracker:',
+      '  kind: linear',
+      '  project_slug: meta-orchestrator',
+      '---',
+      '',
+      'Prompt body.'
+    ].join('\n'));
     writeFileSync(configPath, managedProjectYaml(managedProject({ repoPath, workspaceRoot: workspacePath, logsRoot: logsPath })));
 
     const result = spawnSync(process.execPath, ['src/cli/index.ts', 'workflows:render', '--config', configPath], {
@@ -237,6 +245,7 @@ test('CLI runner start status stop covers local runner smoke path', () => {
   const repoPath = join(cwd, 'repo');
   const runnerPath = join(cwd, 'fake-runner.js');
   const configPath = join(cwd, 'registry.yaml');
+  const runnerPort = 45_010 + Math.trunc(Math.random() * 1000);
 
   try {
     spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
@@ -258,6 +267,7 @@ test('CLI runner start status stop covers local runner smoke path', () => {
       repoPath,
       workspaceRoot: join(cwd, 'workspace'),
       logsRoot: join(cwd, 'logs'),
+      runnerPort,
       command: runnerPath
     })));
 

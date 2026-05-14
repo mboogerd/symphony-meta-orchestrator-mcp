@@ -253,7 +253,7 @@ export class LinearService {
 
   async resolveProjectSlug(slugId: string): Promise<LinearProjectReference | undefined> {
     return this.wrap('resolve_project', async () => {
-      const projects = await this.client.projects({ filter: { slugId: { eq: slugId } }, first: 1 });
+      const projects = await this.client.projects({ filter: { slugId: { eq: linearProjectSlugId(slugId) } }, first: 1 });
       const project = projects.nodes[0];
       return project === undefined ? undefined : this.toProjectReference(project, 'resolve_project');
     });
@@ -590,6 +590,21 @@ export class LinearService {
       throw new LinearServiceError('linear_sdk_error', operation, error instanceof Error ? error.message : String(error), {}, error);
     }
   }
+}
+
+export function linearProjectUrlSlug(project: Pick<LinearProjectReference, 'slugId' | 'url'>): string {
+  try {
+    const url = new URL(project.url);
+    const slug = url.pathname.split('/').filter(Boolean).at(-1)?.trim();
+    return slug && slug !== 'project' ? slug : project.slugId;
+  } catch {
+    return project.slugId;
+  }
+}
+
+function linearProjectSlugId(projectSlug: string): string {
+  const slug = projectSlug.trim();
+  return slug.includes('-') ? slug.slice(slug.lastIndexOf('-') + 1) : slug;
 }
 
 export function createLinearService(options: LinearServiceOptions = {}): LinearService {
