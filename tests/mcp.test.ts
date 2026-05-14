@@ -61,7 +61,7 @@ test('MCP tools/list exposes control-plane tools', async () => {
   ]);
   const setupProjectTool = tools.find((tool) => tool.name === 'setup_project');
   assert.equal(setupProjectTool?.description, setupProjectDescription);
-  assert.match(String(setupProjectTool?.description), /repoPath must point to a git repository with an origin remote/);
+  assert.match(String(setupProjectTool?.description), /githubUrl must point to a GitHub repository/);
   assert.match(String(setupProjectTool?.description), /describe_project_schema and then register_project/);
   assert.match(String(setupProjectTool?.description), /Partial failures are not automatically rolled back/);
 });

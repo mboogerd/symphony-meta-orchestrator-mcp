@@ -159,7 +159,7 @@ test('MCP integration sets up a managed project end-to-end with defaults', async
     const response = await callTool(runtime, 'setup', 'setup_project', {
       name: 'Dummy Project',
       teamKey: 'MRB',
-      repoPath: fixture.repoPath,
+      githubUrl: fixture.project.repo.remoteUrl,
       runnerPort: fixture.project.symphony.runnerPort,
       workspaceRoot: fixture.workspacePath,
       logsRoot: fixture.logsPath,
@@ -189,7 +189,7 @@ test('MCP integration sets up a managed project end-to-end with defaults', async
     ]);
     assert.equal(payload.setup.project.symphony.cwd, join(process.cwd(), 'test-symphony'));
     assert.equal(payload.setup.workflow.workflowPath, join(fixture.workspacePath, 'WORKFLOW.md'));
-    assert.equal(existsSync(fixture.repoPath), true);
+    assert.equal(existsSync(fixture.repoPath), false);
     assert.equal(payload.setup.runner.status.state, 'running');
     assert.deepEqual(calls.map((call) => call.method), ['teams', 'teams', 'team.projects', 'createProject']);
     assert.deepEqual(runnerCalls, ['start:dummy-project']);
@@ -211,7 +211,7 @@ test('MCP integration attaches existing same-name Linear project during setup', 
     const response = await callTool(runtime, 'setup-existing-name', 'setup_project', {
       name: 'Existing Name Project',
       teamKey: 'MRB',
-      repoPath: fixture.repoPath,
+      githubUrl: fixture.project.repo.remoteUrl,
       runnerPort: fixture.project.symphony.runnerPort,
       workspaceRoot: fixture.workspacePath,
       logsRoot: fixture.logsPath
@@ -243,7 +243,7 @@ test('MCP integration can set up a managed project from an existing Linear proje
       name: 'Existing Project',
       teamKey: 'MRB',
       linearProjectId: 'existing-project-id',
-      repoPath: fixture.repoPath,
+      githubUrl: fixture.project.repo.remoteUrl,
       runnerPort: fixture.project.symphony.runnerPort,
       workspaceRoot: fixture.workspacePath,
       logsRoot: fixture.logsPath
@@ -265,22 +265,21 @@ test('MCP integration can set up a managed project from an existing Linear proje
 test('MCP integration setup_project uses SYMPHONY_RUNNER_COMMAND without bootstrapping', async () => {
   const fixture = createProjectFixture('mrb100-runner-env-');
   const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
-  const previousCommand = process.env.SYMPHONY_RUNNER_COMMAND;
 
   try {
     rmSync(fixture.repoPath, { recursive: true, force: true });
-    process.env.SYMPHONY_RUNNER_COMMAND = 'custom-symphony-runner';
     const runtime = runtimeFor(fixture.configPath, {
       createLinearService: () => new LinearService({ client: mockLinearClient(calls) }),
       runnerBootstrap: async () => {
         throw new Error('runner bootstrap should not be called when SYMPHONY_RUNNER_COMMAND is set');
       }
     });
+    runtime.env.SYMPHONY_RUNNER_COMMAND = 'custom-symphony-runner';
 
     const response = await callTool(runtime, 'setup-env-runner', 'setup_project', {
       name: 'Env Runner Project',
       teamKey: 'MRB',
-      repoPath: fixture.repoPath,
+      githubUrl: fixture.project.repo.remoteUrl,
       runnerPort: fixture.project.symphony.runnerPort,
       workspaceRoot: fixture.workspacePath,
       logsRoot: fixture.logsPath
@@ -290,13 +289,8 @@ test('MCP integration setup_project uses SYMPHONY_RUNNER_COMMAND without bootstr
     const payload = toolPayload(response);
     assert.equal(payload.setup.project.symphony.command, 'custom-symphony-runner');
     assert.deepEqual(payload.setup.project.symphony.args, ['--i-understand-that-this-will-be-running-without-the-usual-guardrails']);
-    assert.equal(payload.setup.project.symphony.cwd, fixture.repoPath);
+    assert.equal(payload.setup.project.symphony.cwd, process.cwd());
   } finally {
-    if (previousCommand === undefined) {
-      delete process.env.SYMPHONY_RUNNER_COMMAND;
-    } else {
-      process.env.SYMPHONY_RUNNER_COMMAND = previousCommand;
-    }
     fixture.cleanup();
   }
 });
@@ -317,7 +311,7 @@ test('MCP integration setup_project accepts explicit runner configuration', asyn
     const response = await callTool(runtime, 'setup-input-runner', 'setup_project', {
       name: 'Input Runner Project',
       teamKey: 'MRB',
-      repoPath: fixture.repoPath,
+      githubUrl: fixture.project.repo.remoteUrl,
       runnerPort: fixture.project.symphony.runnerPort,
       workspaceRoot: fixture.workspacePath,
       logsRoot: fixture.logsPath,
@@ -360,7 +354,7 @@ test('MCP integration reports runner bootstrap failures in the bootstrap step', 
     const response = await callTool(runtime, 'setup-bootstrap-error', 'setup_project', {
       name: 'Bootstrap Error Project',
       teamKey: 'MRB',
-      repoPath: fixture.repoPath,
+      githubUrl: fixture.project.repo.remoteUrl,
       runnerPort: fixture.project.symphony.runnerPort,
       workspaceRoot: fixture.workspacePath,
       logsRoot: fixture.logsPath
@@ -395,7 +389,7 @@ test('MCP integration rejects an existing Linear project outside the resolved te
       name: 'Wrong Team Project',
       teamKey: 'MRB',
       linearProjectId: 'wrong-team-project-id',
-      repoPath: fixture.repoPath,
+      githubUrl: fixture.project.repo.remoteUrl,
       runnerPort: fixture.project.symphony.runnerPort,
       workspaceRoot: fixture.workspacePath,
       logsRoot: fixture.logsPath
@@ -416,26 +410,25 @@ test('MCP integration rejects an existing Linear project outside the resolved te
   }
 });
 
-test('MCP integration rejects setup for a git repo without an origin remote', async () => {
+test('MCP integration rejects setup for a non-GitHub URL', async () => {
   const fixture = createProjectFixture('mrb96-no-remote-');
   const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
 
   try {
-    initGitRepo(fixture.repoPath);
     const runtime = runtimeFor(fixture.configPath, {
       createLinearService: () => new LinearService({ client: mockLinearClient(calls) })
     });
 
-    const response = await callTool(runtime, 'setup-no-remote', 'setup_project', {
-      name: 'No Remote Project',
+    const response = await callTool(runtime, 'setup-invalid-url', 'setup_project', {
+      name: 'Invalid URL Project',
       teamKey: 'MRB',
-      repoPath: fixture.repoPath,
+      githubUrl: 'https://example.test/repo.git',
       runnerPort: fixture.project.symphony.runnerPort,
       workspaceRoot: fixture.workspacePath,
       logsRoot: fixture.logsPath
     });
 
-    assertJsonRpcOk(response, 'setup-no-remote');
+    assertJsonRpcOk(response, 'setup-invalid-url');
     const result = response.result as Record<string, unknown>;
     assert.equal(result.isError, true);
     const payload = toolPayload(response);
@@ -445,38 +438,34 @@ test('MCP integration rejects setup for a git repo without an origin remote', as
       'bootstrap:ok',
       'registry:error'
     ]);
-    assert.equal(payload.setup.steps[2].error.code, 'repo_remote_missing');
-    assert.equal(payload.setup.steps[2].error.field, 'repo.remoteUrl');
-    assert.match(payload.setup.steps[2].error.message, /Git origin remote is not configured/);
-    assert.match(payload.setup.steps[2].error.message, /git remote add origin <url>/);
+    assert.equal(payload.setup.steps[2].error.code, 'github_url_invalid');
+    assert.equal(payload.setup.steps[2].error.field, 'githubUrl');
+    assert.match(payload.setup.steps[2].error.message, /GitHub repository URL/);
     assert.equal(payload.setup.project, undefined);
   } finally {
     fixture.cleanup();
   }
 });
 
-test('MCP integration accepts explicit setup remote values for a git repo without an origin remote', async () => {
+test('MCP integration derives remote values from the GitHub URL', async () => {
   const fixture = createProjectFixture('mrb101-explicit-remote-');
   const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
 
   try {
-    initGitRepo(fixture.repoPath);
     const runtime = runtimeFor(fixture.configPath, {
       createLinearService: () => new LinearService({ client: mockLinearClient(calls) })
     });
 
-    const response = await callTool(runtime, 'setup-explicit-remote', 'setup_project', {
-      name: 'Explicit Remote Project',
+    const response = await callTool(runtime, 'setup-github-remote', 'setup_project', {
+      name: 'GitHub Remote Project',
       teamKey: 'MRB',
-      repoPath: fixture.repoPath,
-      remoteUrl: 'https://example.test/explicit-remote.git',
-      cloneSource: 'git@example.test:explicit-remote.git',
+      githubUrl: fixture.project.repo.remoteUrl,
       runnerPort: fixture.project.symphony.runnerPort,
       workspaceRoot: fixture.workspacePath,
       logsRoot: fixture.logsPath
     });
 
-    assertJsonRpcOk(response, 'setup-explicit-remote');
+    assertJsonRpcOk(response, 'setup-github-remote');
     const payload = toolPayload(response);
     assert.equal(payload.status, 'ok');
     assert.deepEqual(payload.setup.steps.map((step: { name: string; status: string }) => `${step.name}:${step.status}`), [
@@ -486,8 +475,8 @@ test('MCP integration accepts explicit setup remote values for a git repo withou
       'workflow:ok',
       'runner:skipped'
     ]);
-    assert.equal(payload.setup.project.repo.remoteUrl, 'https://example.test/explicit-remote.git');
-    assert.equal(payload.setup.project.repo.cloneSource, 'git@example.test:explicit-remote.git');
+    assert.equal(payload.setup.project.repo.remoteUrl, fixture.project.repo.remoteUrl);
+    assert.equal(payload.setup.project.repo.cloneSource, fixture.project.repo.remoteUrl);
   } finally {
     fixture.cleanup();
   }
@@ -506,7 +495,7 @@ test('MCP integration bootstraps missing workflow during project setup', async (
     const response = await callTool(runtime, 'setup', 'setup_project', {
       name: 'Partial Project',
       teamKey: 'MRB',
-      repoPath: fixture.repoPath,
+      githubUrl: fixture.project.repo.remoteUrl,
       runnerPort: fixture.project.symphony.runnerPort,
       workspaceRoot: fixture.workspacePath,
       logsRoot: fixture.logsPath
@@ -532,13 +521,12 @@ test('MCP integration bootstraps missing workflow during project setup', async (
   }
 });
 
-test('MCP integration returns partial setup details when repo directory cannot be created', async () => {
+test('MCP integration does not create or require a local repo during project setup', async () => {
   const fixture = createProjectFixture('mrb80-repo-file-', { writeWorkflow: false });
   const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
 
   try {
     rmSync(fixture.repoPath, { recursive: true, force: true });
-    writeFileSync(fixture.repoPath, 'not a directory');
     const runtime = runtimeFor(fixture.configPath, {
       createLinearService: () => new LinearService({ client: mockLinearClient(calls) })
     });
@@ -546,7 +534,7 @@ test('MCP integration returns partial setup details when repo directory cannot b
     const response = await callTool(runtime, 'setup-repo-file', 'setup_project', {
       name: 'Repo File Project',
       teamKey: 'MRB',
-      repoPath: fixture.repoPath,
+      githubUrl: fixture.project.repo.remoteUrl,
       runnerPort: fixture.project.symphony.runnerPort,
       workspaceRoot: fixture.workspacePath,
       logsRoot: fixture.logsPath
@@ -554,18 +542,18 @@ test('MCP integration returns partial setup details when repo directory cannot b
 
     assertJsonRpcOk(response, 'setup-repo-file');
     const result = response.result as Record<string, unknown>;
-    assert.equal(result.isError, true);
+    assert.equal(result.isError, false);
     const payload = toolPayload(response);
-    assert.equal(payload.status, 'invalid');
+    assert.equal(payload.status, 'ok');
     assert.equal(payload.setup.project.id, 'repo-file-project');
     assert.deepEqual(payload.setup.steps.map((step: { name: string; status: string }) => `${step.name}:${step.status}`), [
       'linearProject:ok',
       'bootstrap:ok',
       'registry:ok',
-      'workflow:error'
+      'workflow:ok',
+      'runner:skipped'
     ]);
-    assert.equal(payload.setup.steps[3].error.name, 'Error');
-    assert.match(payload.setup.steps[3].error.message, /not a directory|EEXIST/);
+    assert.equal(existsSync(fixture.repoPath), false);
   } finally {
     fixture.cleanup();
   }
