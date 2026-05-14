@@ -381,7 +381,7 @@ test('render validation skips live runner port checks', async () => {
   }
 });
 
-test('live validation detects unavailable runner port', async () => {
+test('live validation ignores unavailable project runnerPort when using dynamic allocation', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'mrb17-port-'));
 
   try {
@@ -399,12 +399,47 @@ test('live validation detects unavailable runner port', async () => {
       }
     });
 
+    assert.equal(validation.ok, true);
+    assert.equal(validation.phase, 'live');
+    assert.deepEqual(validation.subsystems.runner.errors, []);
+    assert.deepEqual(validation.phases.live.errors, []);
+    assert.deepEqual(checkedPorts, []);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('live validation still detects unavailable explicit environment runner port', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb128-env-port-'));
+  const previousRunnerPort = process.env.SYMPHONY_RUNNER_PORT;
+
+  try {
+    const project = managedProject({ repoPath: join(cwd, 'repo'), workspaceRoot: join(cwd, 'workspace'), logsRoot: join(cwd, 'logs') });
+    spawnSync('git', ['init', project.repo.path], { encoding: 'utf8' });
+    writeFileSync(join(project.repo.path, 'WORKFLOW.md'), 'Prompt body.');
+    process.env.SYMPHONY_RUNNER_PORT = '4310';
+
+    const checkedPorts: number[] = [];
+    const validation = await validateProjectWorkflowSetup(project, {
+      phase: 'live',
+      ...mockRepoWorkflowOptions(project),
+      portAvailable: async (port) => {
+        checkedPorts.push(port);
+        return false;
+      }
+    });
+
     assert.equal(validation.ok, false);
     assert.equal(validation.phase, 'live');
     assert.equal(validation.subsystems.runner.errors[0]?.code, 'runner_port_unavailable');
     assert.equal(validation.phases.live.errors[0]?.code, 'runner_port_unavailable');
     assert.deepEqual(checkedPorts, [4310]);
   } finally {
+    if (previousRunnerPort === undefined) {
+      delete process.env.SYMPHONY_RUNNER_PORT;
+    } else {
+      process.env.SYMPHONY_RUNNER_PORT = previousRunnerPort;
+    }
     rmSync(cwd, { recursive: true, force: true });
   }
 });

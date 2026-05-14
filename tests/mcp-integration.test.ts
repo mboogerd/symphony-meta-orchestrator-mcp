@@ -646,8 +646,10 @@ test('MCP integration bootstraps missing workflow during generation', async () =
 test('MCP integration reports live runner command and port failures when requested', async () => {
   const fixture = createProjectFixture('mrb20-runner-failure-', { command: 'definitely-missing-symphony-runner' });
   const checkedPorts: number[] = [];
+  const previousRunnerPort = process.env.SYMPHONY_RUNNER_PORT;
 
   try {
+    process.env.SYMPHONY_RUNNER_PORT = '4310';
     const runtime = runtimeFor(fixture.configPath, {
       portAvailable: async (port) => {
         checkedPorts.push(port);
@@ -668,6 +670,11 @@ test('MCP integration reports live runner command and port failures when request
     assert.deepEqual(codes.sort(), ['runner_port_unavailable']);
     assert.deepEqual(checkedPorts, [4310]);
   } finally {
+    if (previousRunnerPort === undefined) {
+      delete process.env.SYMPHONY_RUNNER_PORT;
+    } else {
+      process.env.SYMPHONY_RUNNER_PORT = previousRunnerPort;
+    }
     fixture.cleanup();
   }
 });

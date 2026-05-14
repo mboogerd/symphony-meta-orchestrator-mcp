@@ -8,6 +8,7 @@ import YAML from 'yaml';
 import type { Environment } from '../../config/env.ts';
 import type { Logger } from '../../logging/logger.ts';
 import { validateProjectRegistry, type ManagedProject, type ManagedProjectRegistry } from '../registry/index.ts';
+import { allocatePort, DEFAULT_RUNNER_PORT } from '../runner/ports.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -313,7 +314,7 @@ async function validateRunner(
   const legacyProject = project as ManagedProject & { symphony?: { command?: string; cwd?: string; runnerPort?: number; args?: string[] } };
   const command = process.env.SYMPHONY_RUNNER_COMMAND ?? legacyProject.symphony?.command ?? 'symphony';
   const cwd = resolve(process.env.SYMPHONY_RUNNER_CWD ?? legacyProject.symphony?.cwd ?? workspaceRoot);
-  const runnerPort = Number(process.env.SYMPHONY_RUNNER_PORT ?? legacyProject.symphony?.runnerPort ?? '0');
+  const runnerPort = Number(process.env.SYMPHONY_RUNNER_PORT ?? '0');
   let blockingRunnerIssues = 0;
   try {
     const cwdStat = await stat(cwd);
@@ -348,6 +349,17 @@ async function validateRunner(
   if (runnerPort > 0 && !await portAvailable(runnerPort)) {
     blockingRunnerIssues += 1;
     addIssue({ code: 'runner_port_unavailable', field: 'SYMPHONY_RUNNER_PORT', message: `Runner port ${runnerPort} is already in use` });
+  } else if (runnerPort <= 0) {
+    try {
+      await allocatePort(DEFAULT_RUNNER_PORT);
+    } catch (error) {
+      blockingRunnerIssues += 1;
+      addIssue({
+        code: 'runner_port_unavailable',
+        field: 'SYMPHONY_RUNNER_PORT',
+        message: `No available runner port found: ${error instanceof Error ? error.message : String(error)}`
+      });
+    }
   }
 
   if (blockingRunnerIssues === 0) {

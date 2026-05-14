@@ -204,13 +204,14 @@ test('runner status clears stale state for a missing process before returning re
   }
 });
 
-test('runner manager start reports invalid setup when runner port is occupied', async () => {
-  const cwd = mkdtempSync(join(tmpdir(), 'mrb24-runner-port-'));
+test('runner manager start reports invalid setup when explicit environment runner port is occupied', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb128-runner-env-port-'));
   const repoPath = join(cwd, 'repo');
   const workspacePath = join(cwd, 'workspace');
   const logsPath = join(cwd, 'logs');
-  const runnerPort = 46_110 + Math.trunc(Math.random() * 1000);
+  const runnerPort = 46_210 + Math.trunc(Math.random() * 1000);
   const server = createServer();
+  const previousRunnerPort = process.env.SYMPHONY_RUNNER_PORT;
 
   try {
     await new Promise<void>((resolvePromise, reject) => {
@@ -219,14 +220,20 @@ test('runner manager start reports invalid setup when runner port is occupied', 
     });
     spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
     writeFileSync(join(repoPath, 'WORKFLOW.md'), 'Prompt body.');
+    process.env.SYMPHONY_RUNNER_PORT = String(runnerPort);
 
     const manager = createRunnerManager({ command: process.execPath, commandArgs: readyNodeRunnerArgs('meta-orchestrator') });
-    const result = await manager.start(managedProject({ repoPath, workspaceRoot: workspacePath, logsRoot: logsPath, runnerPort }));
+    const result = await manager.start(managedProject({ repoPath, workspaceRoot: workspacePath, logsRoot: logsPath }));
 
     assert.equal(result.started, false);
     assert.equal(result.status.state, 'invalid');
     assert.match(result.status.details.message, /Runner port .* is already in use/);
   } finally {
+    if (previousRunnerPort === undefined) {
+      delete process.env.SYMPHONY_RUNNER_PORT;
+    } else {
+      process.env.SYMPHONY_RUNNER_PORT = previousRunnerPort;
+    }
     await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -518,7 +525,7 @@ test('CLI runners:status reports runner lifecycle fields from the registry', () 
     assert.equal(result.status, 0, result.stderr);
     const output = JSON.parse(result.stdout);
     assert.equal(output.runner.state, 'idle');
-    assert.equal(output.runner.dashboardUrl, 'http://localhost:4310');
+    assert.equal(output.runner.dashboardUrl, undefined);
     assert.equal(output.runner.workflowPath, join(cwd, 'workspace', 'WORKFLOW.md'));
   } finally {
     rmSync(cwd, { recursive: true, force: true });
