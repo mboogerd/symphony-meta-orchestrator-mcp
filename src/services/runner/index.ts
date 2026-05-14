@@ -183,9 +183,11 @@ export function createRunnerManager(options: RunnerManagerOptions = {}): RunnerM
       };
       await writeState(paths.statePath, readyState);
 
+      const status = statusFromState(project, paths, readyState, readiness.ready ? 'running' : 'unhealthy', readiness.details);
+
       return {
-        started: true,
-        status: statusFromState(project, paths, readyState, readiness.ready ? 'running' : 'unhealthy', readiness.details)
+        started: status.state === 'running',
+        status
       };
     },
 
