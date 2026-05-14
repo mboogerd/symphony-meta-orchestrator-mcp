@@ -38,3 +38,28 @@ test('createRuntimeConfig loads .env and resolves config path', () => {
     rmSync(cwd, { recursive: true, force: true });
   }
 });
+
+test('createRuntimeConfig defaults to YAML registry config path', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb99-config-default-'));
+
+  try {
+    const runtime = createRuntimeConfig({ cwd, env: {}, argv: [] });
+
+    assert.equal(runtime.configPath, join(cwd, 'symphony.registry.yaml'));
+    assert.equal(runtime.configExists, false);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('createRuntimeConfig preserves explicit JSON config path override', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb99-config-json-'));
+
+  try {
+    const runtime = createRuntimeConfig({ cwd, env: {}, argv: ['--config', 'custom.json'] });
+
+    assert.equal(runtime.configPath, join(cwd, 'custom.json'));
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
