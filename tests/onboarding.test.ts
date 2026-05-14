@@ -8,17 +8,82 @@ import { bootstrapSymphonyRunner, setupManagedProject } from '../src/services/on
 test('bootstrapSymphonyRunner clones the OpenAI Symphony repository by default', async () => {
   const fixture = createBootstrapFixture('mrb116-default-repo-', `#!/bin/sh
 printf '%s\\n' "$@" > "$GIT_ARGS_FILE"
-mkdir -p "$3"
+mkdir -p "$3/elixir"
+printf 'defmodule Symphony.MixProject do\\nend\\n' > "$3/elixir/mix.exs"
+`);
+  createMixShim(fixture, `#!/bin/sh
+printf '%s\\n' "$@" >> "$MIX_ARGS_FILE"
+if [ "$1" = "release" ]; then
+  mkdir -p "_build/prod/rel/symphony/bin"
+  printf '#!/bin/sh\\n' > "_build/prod/rel/symphony/bin/symphony"
+  chmod +x "_build/prod/rel/symphony/bin/symphony"
+fi
 `);
 
   try {
-    await withBootstrapEnv(fixture, async () => {
-      await bootstrapSymphonyRunner(process.cwd());
+    const result = await withBootstrapEnv(fixture, async () => {
+      return bootstrapSymphonyRunner(process.cwd());
     });
 
     assert.equal(
       readFileSync(fixture.gitArgsFile, 'utf8').trim(),
       `clone\nhttps://github.com/openai/symphony.git\n${fixture.installPath}`
+    );
+    assert.equal(readFileSync(fixture.mixArgsFile, 'utf8').trim(), 'deps.get\nrelease');
+    assert.equal(result.command, join(fixture.installPath, 'elixir', '_build', 'prod', 'rel', 'symphony', 'bin', 'symphony'));
+    assert.deepEqual(result.args, ['--i-understand-that-this-will-be-running-without-the-usual-guardrails']);
+    assert.equal(result.cwd, join(fixture.installPath, 'elixir'));
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('bootstrapSymphonyRunner fails clearly when cloned repository is not an Elixir Symphony project', async () => {
+  const fixture = createBootstrapFixture('mrb134-missing-mix-', `#!/bin/sh
+mkdir -p "$3"
+`);
+
+  try {
+    await assert.rejects(
+      withBootstrapEnv(fixture, async () => {
+        await bootstrapSymphonyRunner(process.cwd());
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.equal(error.name, 'SymphonyRunnerBootstrapError');
+        assert.match(error.message, /Expected an Elixir\/Mix Symphony project/);
+        assert.match(error.message, /mix\.exs was not found/);
+        return true;
+      }
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('bootstrapSymphonyRunner wraps mix release failures with runner remediation guidance', async () => {
+  const fixture = createBootstrapFixture('mrb134-mix-error-', `#!/bin/sh
+mkdir -p "$3/elixir"
+printf 'defmodule Symphony.MixProject do\\nend\\n' > "$3/elixir/mix.exs"
+`);
+  createMixShim(fixture, `#!/bin/sh
+echo 'mix release failed' >&2
+exit 1
+`);
+
+  try {
+    await assert.rejects(
+      withBootstrapEnv(fixture, async () => {
+        await bootstrapSymphonyRunner(process.cwd());
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.equal(error.name, 'SymphonyRunnerBootstrapError');
+        assert.match(error.message, /Bootstrap failed while preparing Symphony runner/);
+        assert.match(error.message, /SYMPHONY_RUNNER_COMMAND/);
+        assert.match(error.message, /mix release failed/);
+        return true;
+      }
     );
   } finally {
     fixture.cleanup();
@@ -41,7 +106,7 @@ exit 128
       (error: unknown) => {
         assert.ok(error instanceof Error);
         assert.equal(error.name, 'SymphonyRunnerBootstrapError');
-        assert.match(error.message, /Bootstrap failed while cloning Symphony runner/);
+        assert.match(error.message, /Bootstrap failed while preparing Symphony runner/);
         assert.match(error.message, /setup_project runnerCommand/);
         assert.match(error.message, /SYMPHONY_RUNNER_COMMAND/);
         assert.match(error.message, /SYMPHONY_RUNNER_REPOSITORY/);
@@ -249,6 +314,7 @@ type BootstrapFixture = {
   root: string;
   binDir: string;
   gitArgsFile: string;
+  mixArgsFile: string;
   installPath: string;
   cleanup: () => void;
 };
@@ -258,6 +324,7 @@ function createBootstrapFixture(prefix: string, gitScript: string): BootstrapFix
   const binDir = join(root, 'bin');
   const installPath = join(root, 'install', 'symphony');
   const gitArgsFile = join(root, 'git-args.txt');
+  const mixArgsFile = join(root, 'mix-args.txt');
   const gitPath = join(binDir, 'git');
 
   mkdirSync(binDir, { recursive: true });
@@ -268,9 +335,16 @@ function createBootstrapFixture(prefix: string, gitScript: string): BootstrapFix
     root,
     binDir,
     gitArgsFile,
+    mixArgsFile,
     installPath,
     cleanup: () => rmSync(root, { recursive: true, force: true })
   };
+}
+
+function createMixShim(fixture: BootstrapFixture, script: string): void {
+  const mixPath = join(fixture.binDir, 'mix');
+  writeFileSync(mixPath, script);
+  chmodSync(mixPath, 0o755);
 }
 
 async function withBootstrapEnv<T>(fixture: BootstrapFixture, callback: () => Promise<T>): Promise<T> {
@@ -278,11 +352,13 @@ async function withBootstrapEnv<T>(fixture: BootstrapFixture, callback: () => Pr
   const previousInstallDir = process.env.SYMPHONY_RUNNER_INSTALL_DIR;
   const previousRepository = process.env.SYMPHONY_RUNNER_REPOSITORY;
   const previousGitArgsFile = process.env.GIT_ARGS_FILE;
+  const previousMixArgsFile = process.env.MIX_ARGS_FILE;
 
   try {
     process.env.PATH = `${fixture.binDir}${delimiter}${previousPath ?? ''}`;
     process.env.SYMPHONY_RUNNER_INSTALL_DIR = fixture.installPath;
     process.env.GIT_ARGS_FILE = fixture.gitArgsFile;
+    process.env.MIX_ARGS_FILE = fixture.mixArgsFile;
     delete process.env.SYMPHONY_RUNNER_REPOSITORY;
     return await callback();
   } finally {
@@ -290,6 +366,7 @@ async function withBootstrapEnv<T>(fixture: BootstrapFixture, callback: () => Pr
     restoreEnv('SYMPHONY_RUNNER_INSTALL_DIR', previousInstallDir);
     restoreEnv('SYMPHONY_RUNNER_REPOSITORY', previousRepository);
     restoreEnv('GIT_ARGS_FILE', previousGitArgsFile);
+    restoreEnv('MIX_ARGS_FILE', previousMixArgsFile);
   }
 }
 

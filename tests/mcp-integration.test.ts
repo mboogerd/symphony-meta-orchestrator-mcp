@@ -258,12 +258,9 @@ test('MCP integration sets up a managed project end-to-end with defaults', async
     assert.deepEqual(payload.setup.project.workflow, { source: 'generated', template: 'default' });
     assert.equal(payload.setup.project.githubUrl, fixture.project.repo.remoteUrl);
     assert.equal(payload.setup.project.repo, undefined);
-    assert.equal(payload.setup.project.symphony.command, process.execPath);
-    assert.deepEqual(payload.setup.project.symphony.args, [
-      join(process.cwd(), 'test-symphony', 'bin', 'symphony'),
-      '--i-understand-that-this-will-be-running-without-the-usual-guardrails'
-    ]);
-    assert.equal(payload.setup.project.symphony.cwd, join(process.cwd(), 'test-symphony'));
+    assert.equal(payload.setup.project.symphony.command, join(process.cwd(), 'test-symphony', 'elixir', '_build', 'prod', 'rel', 'symphony', 'bin', 'symphony'));
+    assert.deepEqual(payload.setup.project.symphony.args, ['--i-understand-that-this-will-be-running-without-the-usual-guardrails']);
+    assert.equal(payload.setup.project.symphony.cwd, join(process.cwd(), 'test-symphony', 'elixir'));
     assert.equal(payload.setup.workflow.workflowPath, join(defaultWorkspace, 'WORKFLOW.md'));
     assert.equal(payload.setup.workflow.logsRoot, join(tmpdir(), 'symphony-logs', 'dummy-project'));
     assert.equal(existsSync(fixture.repoPath), false);
@@ -899,9 +896,9 @@ function runtimeFor(configPath: string, services: NonNullable<Parameters<typeof 
     ...createRuntimeConfig({ env: {}, argv: ['--config', configPath], cwd: process.cwd() }),
     mcpServices: {
       runnerBootstrap: async () => ({
-        command: process.execPath,
-        args: [join(process.cwd(), 'test-symphony', 'bin', 'symphony'), '--i-understand-that-this-will-be-running-without-the-usual-guardrails'],
-        cwd: join(process.cwd(), 'test-symphony')
+        command: join(process.cwd(), 'test-symphony', 'elixir', '_build', 'prod', 'rel', 'symphony', 'bin', 'symphony'),
+        args: ['--i-understand-that-this-will-be-running-without-the-usual-guardrails'],
+        cwd: join(process.cwd(), 'test-symphony', 'elixir')
       }),
       ...services
     }

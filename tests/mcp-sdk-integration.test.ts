@@ -191,12 +191,9 @@ test('SDK MCP setup_project matches compatibility tool behavior', async () => {
 
       assert.equal(payload.status, 'ok');
       assert.equal(payload.setup.project.id, 'sdk-project');
-      assert.equal(payload.setup.project.symphony.command, process.execPath);
-      assert.deepEqual(payload.setup.project.symphony.args, [
-        join(process.cwd(), 'test-symphony', 'bin', 'symphony'),
-        '--i-understand-that-this-will-be-running-without-the-usual-guardrails'
-      ]);
-      assert.equal(payload.setup.project.symphony.cwd, join(process.cwd(), 'test-symphony'));
+      assert.equal(payload.setup.project.symphony.command, join(process.cwd(), 'test-symphony', 'elixir', '_build', 'prod', 'rel', 'symphony', 'bin', 'symphony'));
+      assert.deepEqual(payload.setup.project.symphony.args, ['--i-understand-that-this-will-be-running-without-the-usual-guardrails']);
+      assert.equal(payload.setup.project.symphony.cwd, join(process.cwd(), 'test-symphony', 'elixir'));
       assert.deepEqual(payload.setup.steps.map((step: { name: string; status: string }) => `${step.name}:${step.status}`), [
         'linearProject:ok',
         'bootstrap:ok',
@@ -396,9 +393,9 @@ function runtimeFor(configPath: string, services: NonNullable<McpServerRuntimeCo
     ...createRuntimeConfig({ env: {}, argv: ['--config', configPath], cwd: process.cwd() }),
     mcpServices: {
       runnerBootstrap: async () => ({
-        command: process.execPath,
-        args: [join(process.cwd(), 'test-symphony', 'bin', 'symphony'), '--i-understand-that-this-will-be-running-without-the-usual-guardrails'],
-        cwd: join(process.cwd(), 'test-symphony')
+        command: join(process.cwd(), 'test-symphony', 'elixir', '_build', 'prod', 'rel', 'symphony', 'bin', 'symphony'),
+        args: ['--i-understand-that-this-will-be-running-without-the-usual-guardrails'],
+        cwd: join(process.cwd(), 'test-symphony', 'elixir')
       }),
       ...services
     }
