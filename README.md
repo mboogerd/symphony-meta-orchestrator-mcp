@@ -103,6 +103,9 @@ to the `workspace` phase, which checks registry/schema data, workflow
 renderability, repository metadata, writable workspace/log roots, and Codex
 policy without probing the live runner command or TCP port. Use CLI `--live`,
 MCP `live: true`, or MCP `phase: "live"` when you need full runner readiness.
+Live validation checks that the runner command exists and the port is available;
+it also runs a short warning-only command compatibility probe, but it does not
+guarantee that every runner argument is valid for full startup.
 Workflow rendering also uses non-live validation, so an occupied runner port does
 not block writing `WORKFLOW.md`; `runner start` always performs live checks.
 Each project result includes `phase` and `phases` fields to show which phase was
