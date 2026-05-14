@@ -85,8 +85,8 @@ test('SDK MCP describe_project_schema exposes register_project template', async 
       }));
 
       assert.equal(described.status, 'ok');
-      assert.deepEqual(described.guidance.requiredTopLevelFields, ['id', 'name', 'tracker', 'repo', 'workflow', 'symphony', 'codex']);
-      assert.equal(described.example.tracker.kind, 'linear');
+      assert.deepEqual(described.guidance.requiredTopLevelFields, ['id', 'name', 'githubUrl', 'workflow', 'codex']);
+      assert.equal(described.example.githubUrl, 'https://github.com/example/meta-orchestrator.git');
     } finally {
       await sdk.close();
     }
@@ -290,7 +290,7 @@ test('SDK MCP runner lifecycle tools use mocked runner and setup probes', async 
       })).status, 'ok');
 
       assert.deepEqual(runnerCalls, ['start:meta-orchestrator', 'status:meta-orchestrator', 'stop:meta-orchestrator']);
-      assert.deepEqual(checkedPorts, [fixture.project.symphony.runnerPort]);
+      assert.deepEqual(checkedPorts, [4310]);
     } finally {
       await sdk.close();
     }

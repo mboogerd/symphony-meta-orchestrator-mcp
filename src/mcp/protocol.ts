@@ -1,5 +1,6 @@
 import type { RuntimeConfig } from '../config/runtime.ts';
 import { packageInfo } from '../package-info.ts';
+import { LinearProjectCache } from '../services/linear/cache.ts';
 import { createLinearService, LinearServiceError, type LinearService } from '../services/linear/index.ts';
 import { setupManagedProject, type RunnerBootstrapper } from '../services/onboarding/index.ts';
 import { createProjectRegistryService, ProjectRegistryValidationError, type ManagedProject } from '../services/registry/index.ts';
@@ -80,7 +81,7 @@ export async function handleMcpMessage(message: unknown, runtime: McpRuntimeConf
         resources: projects.map((project) => ({
           uri: `symphony://projects/${project.id}`,
           name: project.name,
-          description: `${project.tracker.teamKey} managed project at ${project.repo.path}`,
+          description: `${project.name} managed project for ${project.githubUrl}`,
           mimeType: 'application/yaml'
         }))
       });
@@ -404,7 +405,17 @@ async function requireProject(runtime: RuntimeConfig, projectId: unknown): Promi
 }
 
 function linear(runtime: McpRuntimeConfig) {
-  return runtime.mcpServices?.createLinearService?.(runtime) ?? createLinearService({ apiKey: runtime.env.LINEAR_API_KEY });
+  if (runtime.mcpServices?.createLinearService) {
+    return runtime.mcpServices.createLinearService(runtime);
+  }
+  const service = createLinearService({ apiKey: runtime.env.LINEAR_API_KEY });
+  const teamKey = runtime.env.LINEAR_TEAM_KEY ?? runtime.env.SYMPHONY_LINEAR_TEAM_KEY;
+  return teamKey === undefined
+    ? service
+    : createLinearService({
+        apiKey: runtime.env.LINEAR_API_KEY,
+        projectCache: new LinearProjectCache(service, teamKey)
+      });
 }
 
 function runnerManager(runtime: McpRuntimeConfig) {
@@ -611,27 +622,7 @@ function projectSchema() {
     properties: {
       id: stringSchema(),
       name: stringSchema(),
-      tracker: {
-        type: 'object',
-        properties: {
-          kind: stringSchema(),
-          teamKey: stringSchema(),
-          teamId: stringSchema(),
-          projectId: stringSchema(),
-          projectSlug: stringSchema()
-        },
-        required: ['kind', 'teamKey', 'teamId', 'projectId', 'projectSlug']
-      },
-      repo: {
-        type: 'object',
-        properties: {
-          path: stringSchema(),
-          remoteUrl: stringSchema(),
-          defaultBranch: stringSchema(),
-          cloneSource: stringSchema()
-        },
-        required: ['path', 'remoteUrl', 'defaultBranch', 'cloneSource']
-      },
+      githubUrl: stringSchema(),
       workflow: {
         type: 'object',
         properties: {
@@ -686,19 +677,6 @@ function projectSchema() {
         },
         required: ['source']
       },
-      symphony: {
-        type: 'object',
-        properties: {
-          command: stringSchema(),
-          args: { type: 'array', items: stringSchema() },
-          cwd: stringSchema(),
-          runnerPort: { type: 'integer', minimum: 1, maximum: 65535 },
-          workspaceRoot: stringSchema(),
-          logsRoot: stringSchema(),
-          dashboardUrl: stringSchema()
-        },
-        required: ['command', 'runnerPort', 'workspaceRoot', 'logsRoot']
-      },
       codex: {
         type: 'object',
         properties: {
@@ -728,6 +706,6 @@ function projectSchema() {
         required: ['threadSandbox', 'turnSandbox']
       }
     },
-    required: ['id', 'name', 'tracker', 'repo', 'workflow', 'symphony', 'codex']
+    required: ['id', 'name', 'githubUrl', 'workflow', 'codex']
   };
 }

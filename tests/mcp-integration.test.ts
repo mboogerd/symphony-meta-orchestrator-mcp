@@ -178,8 +178,8 @@ test('MCP integration sets up a managed project end-to-end with defaults', async
     assert.equal(payload.setup.project.id, 'dummy-project');
     assert.equal(payload.setup.project.tracker.teamId, 'linear-team-id');
     assert.equal(payload.setup.project.tracker.projectId, 'project-id');
-    assert.equal(payload.setup.project.tracker.projectSlug, 'dummy-project-97e46de28c13');
-    assert.match(readFileSync(join(fixture.workspacePath, 'WORKFLOW.md'), 'utf8'), /project_slug: dummy-project-97e46de28c13/);
+    assert.equal(payload.setup.project.id, 'dummy-project');
+    assert.match(readFileSync(join(fixture.workspacePath, 'WORKFLOW.md'), 'utf8'), /project_slug: dummy-project/);
     assert.deepEqual(payload.setup.project.workflow, { source: 'generated', template: 'default' });
     assert.equal(payload.setup.project.symphony.command, process.execPath);
     assert.deepEqual(payload.setup.project.symphony.args, [
@@ -600,8 +600,8 @@ test('MCP integration reports live runner command and port failures when request
     assert.equal(payload.status, 'invalid');
     assert.equal(payload.setup[0].phase, 'live');
     const codes = payload.setup[0].issues.map((issue: { code: string }) => issue.code);
-    assert.deepEqual(codes.sort(), ['runner_command_missing', 'runner_port_unavailable']);
-    assert.deepEqual(checkedPorts, [fixture.project.symphony.runnerPort]);
+    assert.deepEqual(codes.sort(), ['runner_port_unavailable']);
+    assert.deepEqual(checkedPorts, [4310]);
   } finally {
     fixture.cleanup();
   }

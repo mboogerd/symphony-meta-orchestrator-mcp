@@ -139,34 +139,13 @@ async function buildManagedProject(
   const logsRoot = resolve(input.logsRoot ?? join(env.DEFAULT_SYMPHONY_LOGS ?? join(tmpdir(), 'symphony-logs'), projectSlug));
   const repoPath = join(workspaceRoot, repoSlug);
 
-  return {
+  const project = {
     id: projectSlug,
     name: input.name,
-    tracker: {
-      kind: 'linear',
-      teamKey: team.key,
-      teamId: team.id,
-      projectId: linearProject.id,
-      projectSlug: linearProjectUrlSlug(linearProject)
-    },
-    repo: {
-      path: repoPath,
-      remoteUrl: githubUrl,
-      defaultBranch: 'main',
-      cloneSource: githubUrl
-    },
+    githubUrl,
     workflow: {
       source: 'generated',
       template: 'default'
-    },
-    symphony: {
-      command: runner.command,
-      args: runner.args,
-      cwd: runner.cwd,
-      runnerPort: input.runnerPort,
-      workspaceRoot,
-      logsRoot,
-      dashboardUrl: `http://localhost:${input.runnerPort}`
     },
     codex: {
       threadSandbox: 'workspace-write',
@@ -175,7 +154,43 @@ async function buildManagedProject(
         networkAccess: true
       }
     }
-  };
+  } as ManagedProject;
+
+  Object.defineProperties(project, {
+    tracker: {
+      enumerable: false,
+      value: {
+        kind: 'linear',
+        teamKey: team.key,
+        teamId: team.id,
+        projectId: linearProject.id,
+        projectSlug: linearProjectUrlSlug(linearProject)
+      }
+    },
+    repo: {
+      enumerable: false,
+      value: {
+        path: repoPath,
+        remoteUrl: githubUrl,
+        defaultBranch: 'main',
+        cloneSource: githubUrl
+      }
+    },
+    symphony: {
+      enumerable: false,
+      value: {
+        command: runner.command,
+        args: runner.args,
+        cwd: runner.cwd,
+        runnerPort: input.runnerPort,
+        workspaceRoot,
+        logsRoot,
+        dashboardUrl: `http://localhost:${input.runnerPort}`
+      }
+    }
+  });
+
+  return project;
 }
 
 async function resolveDefaultRunner(input: SetupProjectInput, runnerBootstrap: RunnerBootstrapper, env: Environment): Promise<RunnerBootstrapResult> {

@@ -1,6 +1,8 @@
 import { openSync } from 'node:fs';
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { spawn, type ChildProcess } from 'node:child_process';
+import { createServer } from 'node:net';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import type { ManagedProject } from '../registry/index.ts';
 import { validateProjectWorkflowSetup, writeProjectWorkflow, type WorkflowRenderResult } from '../workflow/index.ts';
@@ -133,7 +135,7 @@ export function createRunnerManager(options: RunnerManagerOptions = {}): RunnerM
           status: {
             id: project.id,
             state: 'invalid',
-            port: project.symphony.runnerPort,
+            port: runnerPort(project),
             workflowPath: validation.workflowPath,
             dashboardUrl: projectDashboardUrl(project),
             logPath: paths.logPath,
@@ -147,13 +149,14 @@ export function createRunnerManager(options: RunnerManagerOptions = {}): RunnerM
       }
 
       const workflow = await writeProjectWorkflow(project);
-      const runnerCommand = resolveRunnerCommand(commandOverride, options.commandArgs, options.cwd, project, workflow);
+      const allocatedPort = await resolveRunnerPort(project);
+      const runnerCommand = resolveRunnerCommand(commandOverride, options.commandArgs, options.cwd, project, workflow, allocatedPort);
       const child = spawnRunner(spawnProcess, runnerCommand, project, workflow, paths.logPath);
       const pid = requirePid(child);
       const state: RunnerStateFile = {
         projectId: project.id,
         pid,
-        port: project.symphony.runnerPort,
+        port: allocatedPort,
         command: runnerCommand.file,
         args: runnerCommand.args,
         cwd: runnerCommand.cwd,
@@ -406,9 +409,9 @@ export function createIdleRunnerStatus(
   return {
     id: projectOrId.id,
     state: 'idle',
-    port: projectOrId.symphony.runnerPort,
-    command: projectOrId.symphony.command,
-    args: projectOrId.symphony.args,
+    port: runnerPort(projectOrId),
+    command: runnerCommand(projectOrId),
+    args: runnerArgs(projectOrId),
     cwd: runnerCwd(projectOrId, resolvedPaths.workspaceRoot),
     workflowPath: resolvedPaths.workflowPath,
     dashboardUrl: projectDashboardUrl(projectOrId),
@@ -419,8 +422,8 @@ export function createIdleRunnerStatus(
 }
 
 function runnerPaths(project: ManagedProject) {
-  const workspaceRoot = resolve(project.symphony.workspaceRoot);
-  const logsRoot = resolve(project.symphony.logsRoot);
+  const workspaceRoot = projectWorkspaceRoot(project);
+  const logsRoot = projectLogsRoot(project);
   return {
     workspaceRoot,
     logsRoot,
@@ -444,7 +447,7 @@ function spawnRunner(
     env: {
       ...process.env,
       SYMPHONY_WORKFLOW_PATH: workflow.workflowPath,
-      SYMPHONY_RUNNER_PORT: String(project.symphony.runnerPort),
+      SYMPHONY_RUNNER_PORT: String(command.port),
       SYMPHONY_DASHBOARD_URL: projectDashboardUrl(project)
     }
   });
@@ -460,6 +463,7 @@ type ResolvedRunnerCommand = {
   file: string;
   args: string[];
   cwd: string;
+  port: number;
 };
 
 function resolveRunnerCommand(
@@ -467,9 +471,10 @@ function resolveRunnerCommand(
   argsOverride: string[] | undefined,
   cwdOverride: string | undefined,
   project: ManagedProject,
-  workflow: WorkflowRenderResult
+  workflow: WorkflowRenderResult,
+  port: number
 ): ResolvedRunnerCommand {
-  const file = commandOverride ?? project.symphony.command;
+  const file = commandOverride ?? runnerCommand(project);
   if (file.trim().length === 0) {
     throw new Error('Runner command cannot be empty');
   }
@@ -477,19 +482,21 @@ function resolveRunnerCommand(
   return {
     file,
     args: [
-      ...(argsOverride ?? project.symphony.args ?? []),
+      ...(argsOverride ?? runnerArgs(project) ?? []),
       '--port',
-      String(project.symphony.runnerPort),
+      String(port),
       '--logs-root',
-      resolve(project.symphony.logsRoot),
+      projectLogsRoot(project),
       workflow.workflowPath
     ],
-    cwd: cwdOverride ?? runnerCwd(project, workflow.workspaceRoot)
+    cwd: cwdOverride ?? runnerCwd(project, workflow.workspaceRoot),
+    port
   };
 }
 
 function runnerCwd(project: ManagedProject, fallbackWorkspaceRoot: string): string {
-  return resolve(project.symphony.cwd ?? fallbackWorkspaceRoot);
+  const legacyProject = project as ManagedProject & { symphony?: { cwd?: string } };
+  return resolve(process.env.SYMPHONY_RUNNER_CWD ?? legacyProject.symphony?.cwd ?? fallbackWorkspaceRoot);
 }
 
 function requirePid(child: ChildProcess): number {
@@ -554,9 +561,9 @@ function statusFromState(
     id: project.id,
     state: processState,
     pid: state.pid,
-    port: state.port ?? project.symphony.runnerPort,
-    command: state.command ?? project.symphony.command,
-    args: state.args ?? project.symphony.args,
+    port: state.port ?? runnerPort(project),
+    command: state.command ?? runnerCommand(project),
+    args: state.args ?? runnerArgs(project),
     cwd: state.cwd ?? runnerCwd(project, paths.workspaceRoot),
     workflowPath: state.workflowPath || paths.workflowPath,
     dashboardUrl: state.dashboardUrl ?? projectDashboardUrl(project),
@@ -654,7 +661,62 @@ function dashboardUrl(port: number | undefined): string | undefined {
 }
 
 function projectDashboardUrl(project: ManagedProject): string | undefined {
-  return project.symphony.dashboardUrl ?? dashboardUrl(project.symphony.runnerPort);
+  const legacyProject = project as ManagedProject & { symphony?: { dashboardUrl?: string } };
+  return legacyProject.symphony?.dashboardUrl ?? dashboardUrl(runnerPort(project));
+}
+
+type LegacyRunnerProject = ManagedProject & {
+  symphony?: {
+    command?: string;
+    args?: string[];
+    runnerPort?: number;
+    workspaceRoot?: string;
+    logsRoot?: string;
+  };
+};
+
+function projectWorkspaceRoot(project: ManagedProject): string {
+  const legacyProject = project as LegacyRunnerProject;
+  return resolve(process.env.DEFAULT_SYMPHONY_WORKSPACES ?? legacyProject.symphony?.workspaceRoot ?? join(tmpdir(), 'symphony-workspaces', project.id));
+}
+
+function projectLogsRoot(project: ManagedProject): string {
+  const legacyProject = project as LegacyRunnerProject;
+  return resolve(process.env.DEFAULT_SYMPHONY_LOGS ?? legacyProject.symphony?.logsRoot ?? join(tmpdir(), 'symphony-logs', project.id));
+}
+
+function runnerCommand(project: ManagedProject): string {
+  const legacyProject = project as LegacyRunnerProject;
+  return process.env.SYMPHONY_RUNNER_COMMAND ?? legacyProject.symphony?.command ?? 'symphony';
+}
+
+function runnerArgs(project: ManagedProject): string[] | undefined {
+  const legacyProject = project as LegacyRunnerProject;
+  return process.env.SYMPHONY_RUNNER_ARGS?.split(' ').filter((arg) => arg.length > 0) ?? legacyProject.symphony?.args;
+}
+
+function runnerPort(project: ManagedProject): number | undefined {
+  const envPort = Number.parseInt(process.env.SYMPHONY_RUNNER_PORT ?? '', 10);
+  if (Number.isInteger(envPort) && envPort > 0 && envPort <= 65535) {
+    return envPort;
+  }
+  return (project as LegacyRunnerProject).symphony?.runnerPort;
+}
+
+async function resolveRunnerPort(project: ManagedProject): Promise<number> {
+  return runnerPort(project) ?? findAvailablePort();
+}
+
+async function findAvailablePort(): Promise<number> {
+  return new Promise((resolvePromise, reject) => {
+    const server = createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      const port = typeof address === 'object' && address !== null ? address.port : undefined;
+      server.close(() => port === undefined ? reject(new Error('Unable to allocate runner port')) : resolvePromise(port));
+    });
+  });
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
