@@ -85,6 +85,27 @@ test('registry treats absent enabled as true default and omits enabled true from
   }
 });
 
+test('registry runtime hints omit runnerPort when registry does not configure one', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'mrb128-registry-runner-port-'));
+  const configPath = join(cwd, 'symphony.registry.yaml');
+  const registry = createProjectRegistryService(configPath);
+
+  try {
+    await registry.create(baseProject);
+
+    const project = (await registry.load()).projects[0] as ManagedProject & {
+      symphony?: { command?: string; runnerPort?: number; workspaceRoot?: string; logsRoot?: string };
+    };
+
+    assert.equal(project.symphony?.command, process.execPath);
+    assert.equal(project.symphony?.runnerPort, undefined);
+    assert.equal(project.symphony?.workspaceRoot, join(cwd, 'workspace'));
+    assert.equal(project.symphony?.logsRoot, join(cwd, 'logs'));
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test('registry rejects invalid entries with clear validation errors', async () => {
   const cwd = await mkdtemp(join(tmpdir(), 'mrb8-registry-'));
   const registry = createProjectRegistryService(join(cwd, 'registry.yaml'));

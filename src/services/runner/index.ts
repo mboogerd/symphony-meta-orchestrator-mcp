@@ -1,11 +1,13 @@
 import { openSync } from 'node:fs';
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import type { ManagedProject } from '../registry/index.ts';
 import { validateProjectWorkflowSetup, writeProjectWorkflow, type WorkflowRenderResult } from '../workflow/index.ts';
+import { allocatePort, DEFAULT_RUNNER_PORT } from './ports.ts';
+
+export { allocatePort } from './ports.ts';
 
 export type RunnerProcessState = 'idle' | 'starting' | 'running' | 'unhealthy' | 'stopped' | 'exited' | 'missing' | 'invalid';
 
@@ -96,31 +98,6 @@ const STOP_TIMEOUT_MS = 5_000;
 const DEFAULT_READINESS_TIMEOUT_MS = Number.parseInt(process.env.SYMPHONY_RUNNER_READINESS_TIMEOUT_MS ?? '', 10) || 30_000;
 const DEFAULT_READINESS_POLL_INTERVAL_MS = Number.parseInt(process.env.SYMPHONY_RUNNER_READINESS_POLL_INTERVAL_MS ?? '', 10) || 500;
 const LOG_EXCERPT_LINES = 20;
-const DEFAULT_RUNNER_PORT = 4001;
-const DEFAULT_PORT_ALLOCATION_ATTEMPTS = 100;
-
-export async function allocatePort(startFrom = DEFAULT_RUNNER_PORT, options: { maxAttempts?: number } = {}): Promise<number> {
-  const firstPort = Math.trunc(startFrom);
-  const maxAttempts = Math.trunc(options.maxAttempts ?? DEFAULT_PORT_ALLOCATION_ATTEMPTS);
-  if (!Number.isInteger(firstPort) || firstPort < 1 || firstPort > 65_535) {
-    throw new Error(`Invalid runner port allocation start: ${startFrom}`);
-  }
-  if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
-    throw new Error(`Invalid runner port allocation attempts: ${options.maxAttempts}`);
-  }
-
-  for (let offset = 0; offset < maxAttempts; offset += 1) {
-    const port = firstPort + offset;
-    if (port > 65_535) {
-      break;
-    }
-    if (await isPortAvailable(port)) {
-      return port;
-    }
-  }
-
-  throw new Error(`No available runner port found starting at ${firstPort} after ${maxAttempts} attempts`);
-}
 
 export function createRunnerManager(options: RunnerManagerOptions = {}): RunnerManager {
   const now = options.now ?? (() => new Date());
@@ -730,15 +707,6 @@ function runnerPort(project: ManagedProject): number | undefined {
 
 async function resolveRunnerPort(project: ManagedProject): Promise<number> {
   return runnerPort(project) ?? allocatePort(DEFAULT_RUNNER_PORT);
-}
-
-function isPortAvailable(port: number): Promise<boolean> {
-  return new Promise((resolvePromise) => {
-    const server = createServer();
-    server.once('error', () => resolvePromise(false));
-    server.once('listening', () => server.close(() => resolvePromise(true)));
-    server.listen(port, '127.0.0.1');
-  });
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {

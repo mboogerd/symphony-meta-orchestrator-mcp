@@ -279,7 +279,7 @@ test('SDK MCP runner lifecycle tools use mocked runner and setup probes', async 
       })).status, 'ok');
 
       assert.deepEqual(runnerCalls, ['start:meta-orchestrator', 'status:meta-orchestrator', 'stop:meta-orchestrator']);
-      assert.deepEqual(checkedPorts, [4310]);
+      assert.deepEqual(checkedPorts, []);
     } finally {
       await sdk.close();
     }

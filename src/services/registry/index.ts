@@ -357,7 +357,6 @@ function attachRuntimeHints(project: Record<string, unknown>, registryDir: strin
       enumerable: false,
       value: {
         command: process.env.SYMPHONY_RUNNER_COMMAND ?? process.execPath,
-        runnerPort: 4310,
         workspaceRoot,
         logsRoot
       }
