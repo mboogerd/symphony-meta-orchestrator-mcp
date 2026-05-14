@@ -138,7 +138,7 @@ type LinearProjectLike = {
   slugId?: string;
   url?: string;
   team?: MaybePromise<LinearTeamLike>;
-  teams?: MaybePromise<LinearConnection<LinearTeamLike>>;
+  teams?: MaybePromise<LinearConnection<LinearTeamLike>> | ((variables?: Record<string, unknown>) => Promise<LinearConnection<LinearTeamLike>>);
   teamIds?: string[];
 };
 type LinearIssueLike = {
@@ -521,7 +521,10 @@ export class LinearService {
   }
 
   private async projectTeamId(project: LinearProjectLike, operation: string): Promise<string> {
-    const teamId = project.teamIds?.[0] ?? (await project.team)?.id ?? (await project.teams)?.nodes[0]?.id;
+    const teams = typeof project.teams === 'function'
+      ? await project.teams({ first: 1 })
+      : await project.teams;
+    const teamId = project.teamIds?.[0] ?? (await project.team)?.id ?? teams?.nodes[0]?.id;
     return requireString(teamId, 'project.teamId', operation);
   }
 
