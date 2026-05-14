@@ -645,6 +645,20 @@ test('Linear service creates deterministic dependency links', async () => {
   assert.deepEqual(calls[0], { issueId: 'issue-b', relatedIssueId: 'issue-a', type: 'blocks' });
 });
 
+test('Linear service resolves lazy dependency relation accessors', async () => {
+  const service = createLinearService({
+    client: fakeClient({
+      async createIssueRelation() {
+        return { relation: async () => ({ id: 'relation-1', type: 'blocks' }) };
+      }
+    })
+  });
+
+  const dependency = await service.createDependency({ blockingIssueId: 'issue-b', blockedIssueId: 'issue-a' });
+
+  assert.deepEqual(dependency, { id: 'relation-1', type: 'blocks' });
+});
+
 test('Linear service smoke creates project, issue batch, and dependency link', async () => {
   const calls: Record<string, unknown[]> = { projects: [], batches: [], dependencies: [] };
   const service = createLinearService({
