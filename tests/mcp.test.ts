@@ -36,6 +36,7 @@ test('MCP tools/list exposes control-plane tools', async () => {
     'list_projects',
     'get_project',
     'register_project',
+    'describe_project_schema',
     'validate_project',
     'generate_workflow',
     'create_linear_project',
@@ -56,6 +57,47 @@ test('MCP tools/list exposes control-plane tools', async () => {
     'get_runner_status',
     'tail_runner_logs'
   ]);
+});
+
+test('MCP describe_project_schema returns register_project guidance and template', async () => {
+  const runtime = createRuntimeConfig({ env: {}, argv: [], cwd: process.cwd() });
+
+  const response = await handleMcpMessage({
+    jsonrpc: '2.0',
+    id: 'schema',
+    method: 'tools/call',
+    params: { name: 'describe_project_schema', arguments: {} }
+  }, runtime);
+
+  const structured = ((response?.result as Record<string, unknown>).structuredContent as Record<string, any>);
+  assert.equal(structured.status, 'ok');
+  assert.deepEqual(structured.guidance.requiredTopLevelFields, ['id', 'name', 'tracker', 'repo', 'workflow', 'symphony', 'codex']);
+  assert.equal(structured.example.tracker.kind, 'linear');
+  assert.equal(structured.example.workflow.source, 'repo');
+});
+
+test('MCP register_project validation errors include schema guidance', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb91-mcp-schema-'));
+  const configPath = join(cwd, 'registry.yaml');
+
+  try {
+    const runtime = createRuntimeConfig({ env: {}, argv: ['--config', configPath], cwd: process.cwd() });
+    const response = await handleMcpMessage({
+      jsonrpc: '2.0',
+      id: 'register-invalid',
+      method: 'tools/call',
+      params: { name: 'register_project', arguments: { project: { id: 'incomplete' } } }
+    }, runtime);
+
+    const structured = ((response?.result as Record<string, unknown>).structuredContent as Record<string, any>);
+    assert.equal(structured.status, 'error');
+    assert.equal(structured.error.code, 'invalid_registry');
+    assert.match(structured.error.message, /projects\[0\]\.tracker/);
+    assert.deepEqual(structured.error.details.schema.guidance.requiredTopLevelFields, ['id', 'name', 'tracker', 'repo', 'workflow', 'symphony', 'codex']);
+    assert.equal(structured.error.details.schema.example.codex.threadSandbox, 'workspace-write');
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
 });
 
 test('MCP list_teams returns accessible Linear teams', async () => {
