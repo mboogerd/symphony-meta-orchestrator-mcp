@@ -39,7 +39,7 @@ function fakeClient(overrides: Partial<LinearSdkClient> = {}): LinearSdkClient {
       return { issue: { id: 'issue-1', identifier: 'MRB-1', url: 'https://linear.app/acme/issue/MRB-1/test' } };
     },
     async teams() {
-      return { nodes: [{ id: 'team-1', key: 'MRB' }] };
+      return { nodes: [{ id: 'team-1', key: 'MRB', name: 'Mrboo', description: 'Main team' }] };
     },
     async projects() {
       return { nodes: [{ id: 'project-1', name: 'Meta', slugId: 'meta-123', url: 'https://linear.app/acme/project/meta-123' }] };
@@ -72,6 +72,31 @@ test('Linear service creates projects and returns slug metadata', async () => {
     teamId: 'team-1'
   });
   assert.deepEqual(calls[0], { name: 'Meta', description: 'Milestone 1', leadId: undefined, teamIds: ['team-1'] });
+});
+
+test('Linear service lists accessible teams with keys for discovery', async () => {
+  const queries: Record<string, unknown>[] = [];
+  const service = createLinearService({
+    client: fakeClient({
+      async teams(variables) {
+        queries.push(variables ?? {});
+        return {
+          nodes: [
+            { id: 'team-1', key: 'MRB', name: 'Mrboo', description: 'Main team' },
+            { id: 'team-2', key: 'OPS', name: 'Operations' }
+          ]
+        };
+      }
+    })
+  });
+
+  const teams = await service.listTeams();
+
+  assert.deepEqual(teams, [
+    { id: 'team-1', key: 'MRB', name: 'Mrboo', description: 'Main team' },
+    { id: 'team-2', key: 'OPS', name: 'Operations', description: undefined }
+  ]);
+  assert.deepEqual(queries, [{}]);
 });
 
 test('Linear service resolves project slug metadata when create payload omits it', async () => {

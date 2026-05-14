@@ -19,6 +19,7 @@ export type LinearTeamReference = {
   id: string;
   key: string;
   name?: string;
+  description?: string;
 };
 
 export type LinearWorkflowStateReference = {
@@ -121,7 +122,7 @@ export type LinearSdkClient = {
 
 type LinearPayload<Key extends string, Value> = { success?: boolean } & { [K in Key]?: MaybePromise<Value> };
 type LinearConnection<Node> = { nodes: Node[] };
-type LinearTeamLike = { id: string; key?: string; name?: string };
+type LinearTeamLike = { id: string; key?: string; name?: string; description?: string };
 type LinearProjectLike = { id: string; name: string; slugId?: string; url?: string };
 type LinearIssueLike = {
   id: string;
@@ -197,11 +198,14 @@ export class LinearService {
   async resolveTeam(teamKey: string): Promise<LinearTeamReference> {
     return this.wrap('resolve_team', async () => {
       const team = await this.findTeam(teamKey);
-      return {
-        id: team.id,
-        key: requireString(team.key, 'team.key', 'resolve_team'),
-        name: team.name
-      };
+      return this.toTeamReference(team, 'resolve_team');
+    });
+  }
+
+  async listTeams(): Promise<LinearTeamReference[]> {
+    return this.wrap('list_teams', async () => {
+      const teams = await this.client.teams();
+      return teams.nodes.map((team) => this.toTeamReference(team, 'list_teams'));
     });
   }
 
@@ -431,6 +435,15 @@ export class LinearService {
       name: project.name,
       slugId: requireString(project.slugId, 'project.slugId', operation),
       url: requireString(project.url, 'project.url', operation)
+    };
+  }
+
+  private toTeamReference(team: LinearTeamLike, operation: string): LinearTeamReference {
+    return {
+      id: team.id,
+      key: requireString(team.key, 'team.key', operation),
+      name: team.name,
+      description: team.description
     };
   }
 
