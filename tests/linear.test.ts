@@ -168,14 +168,68 @@ test('Linear service finds projects by case-insensitive name substring and slug'
       name: { containsIgnoreCase: 'meta-orchestrator' },
       slugId: { eq: 'symphony-meta-orchestrator-mcp-d4c50743a53d' }
     },
-    first: 50,
-    includeArchived: true
+    first: 50
   });
   assert.deepEqual(projects, [{
     id: 'project-1',
     name: 'Symphony Meta-Orchestrator MCP',
     slugId: 'symphony-meta-orchestrator-mcp-d4c50743a53d',
     url: 'https://linear.app/mrboo/project/symphony-meta-orchestrator-mcp-d4c50743a53d',
+    teamId: 'team-1'
+  }]);
+});
+
+test('Linear service finds only active projects in the requested team scope', async () => {
+  const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+  const service = createLinearService({
+    client: fakeClient({
+      async projects(variables) {
+        calls.push({ method: 'projects', input: variables ?? {} });
+        return {
+          nodes: [{
+            id: 'wrong-team-project',
+            name: 'Meta Archive',
+            slugId: 'meta-archive',
+            url: 'https://linear.app/acme/project/meta-archive',
+            team: { id: 'team-2', key: 'OPS' }
+          }]
+        };
+      },
+      async teams(variables) {
+        calls.push({ method: 'teams', input: variables ?? {} });
+        return {
+          nodes: [{
+            id: 'team-1',
+            key: 'MRB',
+            async projects(projectVariables) {
+              calls.push({ method: 'team.projects', input: projectVariables ?? {} });
+              return {
+                nodes: [{
+                  id: 'active-team-project',
+                  name: 'Meta Active',
+                  slugId: 'meta-active',
+                  url: 'https://linear.app/acme/project/meta-active'
+                }]
+              };
+            }
+          }]
+        };
+      }
+    })
+  });
+
+  const projects = await service.findProjects({ name: 'meta', teamKey: 'MRB' });
+
+  assert.deepEqual(calls, [
+    { method: 'teams', input: { filter: { key: { eq: 'MRB' } }, first: 1 } },
+    { method: 'teams', input: { filter: { id: { eq: 'team-1' } }, first: 1 } },
+    { method: 'team.projects', input: { filter: { name: { containsIgnoreCase: 'meta' } }, first: 50 } }
+  ]);
+  assert.deepEqual(projects, [{
+    id: 'active-team-project',
+    name: 'Meta Active',
+    slugId: 'meta-active',
+    url: 'https://linear.app/acme/project/meta-active',
     teamId: 'team-1'
   }]);
 });

@@ -151,10 +151,11 @@ function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void
   }, async () => withToolErrors(async () => toolResult({ teams: await linear(runtime).listTeams() })));
 
   server.registerTool('find_linear_project', {
-    description: 'Find existing Linear projects by name substring and/or slug ID.',
+    description: 'Find existing Linear projects by name substring and/or slug ID. Pass teamKey to return only active projects that setup_project can attach to for that team.',
     inputSchema: {
       name: optionalString,
-      slugId: optionalString
+      slugId: optionalString,
+      teamKey: optionalString
     }
   }, async (args) => withToolErrors(async () => toolResult({ projects: await linear(runtime).findProjects(args) })));
 

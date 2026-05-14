@@ -22,6 +22,8 @@ export type LinearProjectLookupResult = LinearProjectReference & {
 export type FindLinearProjectInput = {
   name?: string;
   slugId?: string;
+  teamId?: string;
+  teamKey?: string;
 };
 
 export type LinearTeamReference = {
@@ -279,11 +281,30 @@ export class LinearService {
         filter.slugId = { eq: slugId };
       }
 
-      const projects = await this.client.projects({
+      const projectQuery = {
         ...(Object.keys(filter).length > 0 ? { filter } : {}),
-        first: 50,
-        includeArchived: true
-      });
+        first: 50
+      };
+      const teamId = input.teamId ?? (input.teamKey === undefined ? undefined : await this.findTeamId(input.teamKey));
+
+      if (teamId !== undefined) {
+        const teams = await this.client.teams({ filter: { id: { eq: teamId } }, first: 1 });
+        const team = requireEntity(teams.nodes[0], 'team', 'find_project');
+        const projects = team.projects === undefined
+          ? { nodes: [] }
+          : typeof team.projects === 'function'
+            ? await team.projects(projectQuery)
+            : await team.projects;
+        const matchingProjects = typeof team.projects === 'function'
+          ? projects.nodes
+          : projects.nodes.filter((project) => projectMatchesProjectLookup(project, name, slugId));
+        return Promise.all(matchingProjects.map(async (project) => ({
+          ...this.toProjectReference(await this.hydrateProjectReference(project, 'find_project'), 'find_project'),
+          teamId
+        })));
+      }
+
+      const projects = await this.client.projects(projectQuery);
       return Promise.all(projects.nodes.map(async (project) => this.toProjectLookupResult(project, 'find_project')));
     });
   }
@@ -664,6 +685,18 @@ export function linearProjectUrlSlug(project: Pick<LinearProjectReference, 'slug
 function linearProjectSlugId(projectSlug: string): string {
   const slug = projectSlug.trim();
   return slug.includes('-') ? slug.slice(slug.lastIndexOf('-') + 1) : slug;
+}
+
+function projectMatchesProjectLookup(project: LinearProjectLike, name: string | undefined, slugId: string | undefined): boolean {
+  if (name !== undefined && !project.name.toLocaleLowerCase().includes(name.toLocaleLowerCase())) {
+    return false;
+  }
+
+  if (slugId !== undefined && project.slugId !== slugId) {
+    return false;
+  }
+
+  return true;
 }
 
 export function createLinearService(options: LinearServiceOptions = {}): LinearService {
