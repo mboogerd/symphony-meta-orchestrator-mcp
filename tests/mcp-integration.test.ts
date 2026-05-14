@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -209,7 +209,7 @@ test('MCP integration rejects an existing Linear project outside the resolved te
   }
 });
 
-test('MCP integration returns partial setup details when workflow generation fails', async () => {
+test('MCP integration bootstraps missing workflow during project setup', async () => {
   const fixture = createProjectFixture('mrb71-partial-', { writeWorkflow: false });
   const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
 
@@ -229,22 +229,24 @@ test('MCP integration returns partial setup details when workflow generation fai
 
     assertJsonRpcOk(response, 'setup');
     const result = response.result as Record<string, unknown>;
-    assert.equal(result.isError, true);
+    assert.equal(result.isError, false);
     const payload = toolPayload(response);
-    assert.equal(payload.status, 'invalid');
+    assert.equal(payload.status, 'ok');
     assert.equal(payload.setup.project.id, 'partial-project');
     assert.deepEqual(payload.setup.steps.map((step: { name: string; status: string }) => `${step.name}:${step.status}`), [
       'linearProject:ok',
       'registry:ok',
-      'workflow:error'
+      'workflow:ok',
+      'runner:skipped'
     ]);
-    assert.equal(payload.setup.steps[2].error.name, 'WorkflowSetupValidationError');
+    assert.equal(payload.setup.workflow.workflowPath, join(fixture.workspacePath, 'WORKFLOW.md'));
+    assert.equal(existsSync(payload.setup.workflow.workflowPath), true);
   } finally {
     fixture.cleanup();
   }
 });
 
-test('MCP integration returns structured tool error when a workflow template is missing', async () => {
+test('MCP integration bootstraps missing workflow during generation', async () => {
   const fixture = createProjectFixture('mrb20-missing-workflow-', { writeWorkflow: false });
 
   try {
@@ -255,11 +257,11 @@ test('MCP integration returns structured tool error when a workflow template is 
 
     assertJsonRpcOk(response, 'render');
     const result = response.result as Record<string, unknown>;
-    assert.equal(result.isError, true);
+    assert.equal(result.isError, false);
     const payload = toolPayload(response);
-    assert.equal(payload.status, 'error');
-    assert.equal(payload.error.code, 'invalid_workflow_setup');
-    assert.equal(payload.error.details.setup[0].issues[0].code, 'workflow_path_missing');
+    assert.equal(payload.status, 'ok');
+    assert.equal(payload.workflow.workflowPath, join(fixture.workspacePath, 'WORKFLOW.md'));
+    assert.equal(existsSync(payload.workflow.workflowPath), true);
   } finally {
     fixture.cleanup();
   }

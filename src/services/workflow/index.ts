@@ -190,17 +190,19 @@ export async function validateProjectWorkflowSetups(projects: ManagedProject[], 
 }
 
 export async function writeProjectWorkflow(project: ManagedProject): Promise<WorkflowRenderResult> {
-  const validation = await validateProjectWorkflowSetup(project, { phase: 'workspace' });
+  const validation = await validateProjectWorkflowSetup(project, { phase: 'schema' });
 
-  if (!validation.ok || validation.workflow === undefined) {
+  if (!validation.ok) {
     throw new WorkflowSetupValidationError([validation]);
   }
 
-  await mkdir(validation.workspaceRoot, { recursive: true });
-  await mkdir(validation.logsRoot, { recursive: true });
-  await mkdir(dirname(validation.workflowPath), { recursive: true });
-  await writeFile(validation.workflowPath, validation.workflow.content, 'utf8');
-  return validation.workflow;
+  const workflow = await renderProjectWorkflow(project);
+
+  await mkdir(workflow.workspaceRoot, { recursive: true });
+  await mkdir(workflow.logsRoot, { recursive: true });
+  await mkdir(dirname(workflow.workflowPath), { recursive: true });
+  await writeFile(workflow.workflowPath, workflow.content, 'utf8');
+  return workflow;
 }
 
 export class WorkflowSetupValidationError extends Error {
@@ -497,20 +499,36 @@ const DEFAULT_CODEX_APPROVAL_POLICY = 'never';
 
 async function loadWorkflowTemplate(project: ManagedProject, repoPath: string): Promise<WorkflowTemplate> {
   if (project.workflow.source === 'generated') {
-    return {
-      frontMatter: {},
-      body: [
-        `You are working on a Linear ticket \`{{ issue.identifier }}\` for ${project.name}.`,
-        '',
-        'Use the repository cloned into this workspace as the source of truth.',
-        'Keep the Linear issue workpad current and validate changes before handing off.'
-      ].join('\n')
-    };
+    return defaultWorkflowTemplate(project);
   }
 
   const templatePath = resolve(repoPath, project.workflow.path);
-  const raw = await readFile(templatePath, 'utf8');
+  let raw: string;
+  try {
+    raw = await readFile(templatePath, 'utf8');
+  } catch (error) {
+    if (isFileNotFoundError(error)) {
+      return defaultWorkflowTemplate(project);
+    }
+    throw error;
+  }
   return parseWorkflowTemplate(raw);
+}
+
+function defaultWorkflowTemplate(project: ManagedProject): WorkflowTemplate {
+  return {
+    frontMatter: {},
+    body: [
+      `You are working on a Linear ticket \`{{ issue.identifier }}\` for ${project.name}.`,
+      '',
+      'Use the repository cloned into this workspace as the source of truth.',
+      'Keep the Linear issue workpad current and validate changes before handing off.'
+    ].join('\n')
+  };
+}
+
+function isFileNotFoundError(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }
 
 function parseWorkflowTemplate(raw: string): WorkflowTemplate {
