@@ -191,8 +191,8 @@ export async function handleMcpMessage(message: unknown, runtime: McpRuntimeConf
             blockingIssueId: stringSchema(),
             blockedIssueId: stringSchema()
           }, ['projectId', 'blockingIssueId', 'blockedIssueId']),
-          tool('start_runner', 'Start the Symphony runner for a managed project.', { projectId: stringSchema() }, ['projectId']),
-          tool('stop_runner', 'Stop the Symphony runner for a managed project.', { projectId: stringSchema() }, ['projectId']),
+          tool('enable_project', 'Enable a managed project and start its Symphony runner.', { projectId: stringSchema() }, ['projectId']),
+          tool('disable_project', 'Disable a managed project and stop its Symphony runner.', { projectId: stringSchema() }, ['projectId']),
           tool('restart_runner', 'Restart the Symphony runner for a managed project.', { projectId: stringSchema() }, ['projectId']),
           tool('get_runner_status', 'Inspect the Symphony runner for a managed project.', { projectId: stringSchema() }, ['projectId']),
           tool('tail_runner_logs', 'Read recent runner log lines for a managed project.', {
@@ -356,18 +356,27 @@ async function handleToolCall(message: JsonRpcRequest, runtime: McpRuntimeConfig
       });
     }
 
-    if (name === 'start_runner' || name === 'stop_runner' || name === 'restart_runner' || name === 'get_runner_status' || name === 'tail_runner_logs') {
+    if (name === 'enable_project') {
+      const project = await registry.update(requiredString(argumentsValue.projectId, 'projectId'), { enabled: undefined });
+      const runner = await runnerManager(runtime).start(project);
+      return toolResult(message.id ?? null, { runner, project });
+    }
+
+    if (name === 'disable_project') {
+      const project = await requireProject(runtime, argumentsValue.projectId);
+      const runner = await runnerManager(runtime).stop(project);
+      const updated = await registry.update(requiredString(argumentsValue.projectId, 'projectId'), { enabled: false });
+      return toolResult(message.id ?? null, { runner, project: updated });
+    }
+
+    if (name === 'restart_runner' || name === 'get_runner_status' || name === 'tail_runner_logs') {
       const project = await requireProject(runtime, argumentsValue.projectId);
       const manager = runnerManager(runtime);
-      const runner = name === 'start_runner'
-        ? await manager.start(project)
-        : name === 'stop_runner'
-          ? await manager.stop(project)
-          : name === 'restart_runner'
-            ? await manager.restart(project)
-            : name === 'tail_runner_logs'
-              ? await manager.tailLogs(project, typeof argumentsValue.lineCount === 'number' ? argumentsValue.lineCount : undefined)
-              : await manager.status(project);
+      const runner = name === 'restart_runner'
+        ? await manager.restart(project)
+        : name === 'tail_runner_logs'
+          ? await manager.tailLogs(project, typeof argumentsValue.lineCount === 'number' ? argumentsValue.lineCount : undefined)
+          : await manager.status(project);
       return toolResult(message.id ?? null, { runner });
     }
 

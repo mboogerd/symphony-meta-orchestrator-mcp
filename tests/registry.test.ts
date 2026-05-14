@@ -52,6 +52,39 @@ test('registry creates, persists, loads, lists, and updates YAML managed project
   }
 });
 
+test('registry round-trips enabled: false correctly', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'mrb122-registry-disabled-'));
+  const configPath = join(cwd, 'symphony.registry.yaml');
+  const registry = createProjectRegistryService(configPath);
+
+  try {
+    await registry.create({ ...baseProject, enabled: false });
+
+    assert.equal((await registry.load()).projects[0]?.enabled, false);
+    assert.match(readFileSync(configPath, 'utf8'), /enabled: false/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('registry treats absent enabled as true default and omits enabled true from YAML', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'mrb122-registry-enabled-default-'));
+  const configPath = join(cwd, 'symphony.registry.yaml');
+  const registry = createProjectRegistryService(configPath);
+
+  try {
+    await registry.create(baseProject);
+    assert.equal((await registry.load()).projects[0]?.enabled, undefined);
+    assert.doesNotMatch(readFileSync(configPath, 'utf8'), /enabled: true/);
+
+    await registry.update(baseProject.id, { enabled: true });
+    assert.equal((await registry.load()).projects[0]?.enabled, undefined);
+    assert.doesNotMatch(readFileSync(configPath, 'utf8'), /enabled: true/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test('registry rejects invalid entries with clear validation errors', async () => {
   const cwd = await mkdtemp(join(tmpdir(), 'mrb8-registry-'));
   const registry = createProjectRegistryService(join(cwd, 'registry.yaml'));

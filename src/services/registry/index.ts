@@ -12,6 +12,7 @@ export type ManagedProjectRegistry = {
 export type ManagedProject = {
   id: string;
   name: string;
+  enabled?: boolean;
   githubUrl: string;
   workflow: WorkflowConfig;
   codex: CodexPolicyConfig;
@@ -155,6 +156,7 @@ const workflowRuntimeSchema = z.object({
 export const managedProjectSchema = z.object({
   id: nonEmptyString,
   name: nonEmptyString,
+  enabled: z.boolean().optional(),
   githubUrl: nonEmptyString,
   workflow: z.discriminatedUnion('source', [
     z.object({
@@ -247,7 +249,7 @@ export async function loadRegistry(configPath: string): Promise<ManagedProjectRe
 export async function saveRegistry(configPath: string, registry: ManagedProjectRegistry): Promise<void> {
   validateProjectRegistry(registry);
   await mkdir(dirname(configPath), { recursive: true });
-  await writeFile(configPath, YAML.stringify(registry, { collectionStyle: 'block' }), 'utf8');
+  await writeFile(configPath, YAML.stringify(registryForYaml(registry), { collectionStyle: 'block' }), 'utf8');
 }
 
 export function validateProjectRegistry(registry: ManagedProjectRegistry): void {
@@ -406,12 +408,39 @@ function validateProjects(projects: unknown[], issues: string[]): void {
 }
 
 function mergeProject(existing: ManagedProject, patch: ManagedProjectPatch): ManagedProject {
-  return {
+  const merged = {
     ...existing,
     ...patch,
     workflow: { ...existing.workflow, ...patch.workflow } as WorkflowConfig,
     codex: { ...existing.codex, ...patch.codex }
   };
+  copyNonEnumerableProjectProperties(existing, merged);
+  return omitDefaultEnabled(merged);
+}
+
+function registryForYaml(registry: ManagedProjectRegistry): ManagedProjectRegistry {
+  return {
+    ...registry,
+    projects: registry.projects.map(omitDefaultEnabled)
+  };
+}
+
+function omitDefaultEnabled(project: ManagedProject): ManagedProject {
+  if (project.enabled !== true && project.enabled !== undefined) {
+    return project;
+  }
+
+  const { enabled: _enabled, ...rest } = project;
+  copyNonEnumerableProjectProperties(project, rest);
+  return rest;
+}
+
+function copyNonEnumerableProjectProperties(source: ManagedProject, target: ManagedProject): void {
+  for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(source))) {
+    if (!descriptor.enumerable && !(key in target)) {
+      Object.defineProperty(target, key, descriptor);
+    }
+  }
 }
 
 function readRequiredString(value: unknown, path: string, issues: string[]): string | undefined {

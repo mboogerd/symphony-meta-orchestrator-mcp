@@ -93,6 +93,11 @@ export async function startAllRunners(runtime: McpServerRuntimeConfig, logger: L
   const manager = runnerManager(runtime);
 
   for (const project of projects) {
+    if (project.enabled === false) {
+      logger.info('runner auto-start skipped (project disabled)', { projectId: project.id });
+      continue;
+    }
+
     try {
       const status = await manager.status(project);
       if (status.state === 'running' || status.state === 'starting') {
@@ -281,20 +286,34 @@ function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void
     dependency: await linear(runtime).linkProjectIssueDependency(await requireProject(runtime, projectId), { blockingIssueId, blockedIssueId })
   })));
 
-  for (const name of ['start_runner', 'stop_runner', 'restart_runner', 'get_runner_status'] as const) {
+  server.registerTool('enable_project', {
+    description: 'Enable a managed project and start its Symphony runner.',
+    inputSchema: { projectId: requiredString }
+  }, async ({ projectId }) => withToolErrors(async () => {
+    const project = await registry(runtime).update(projectId, { enabled: undefined });
+    return toolResult({ runner: await runnerManager(runtime).start(project), project });
+  }));
+
+  server.registerTool('disable_project', {
+    description: 'Disable a managed project and stop its Symphony runner.',
+    inputSchema: { projectId: requiredString }
+  }, async ({ projectId }) => withToolErrors(async () => {
+    const project = await requireProject(runtime, projectId);
+    const runner = await runnerManager(runtime).stop(project);
+    const updated = await registry(runtime).update(projectId, { enabled: false });
+    return toolResult({ runner, project: updated });
+  }));
+
+  for (const name of ['restart_runner', 'get_runner_status'] as const) {
     server.registerTool(name, {
       description: `${name.replaceAll('_', ' ')} for a managed project.`,
       inputSchema: { projectId: requiredString }
     }, async ({ projectId }) => withToolErrors(async () => {
       const project = await requireProject(runtime, projectId);
       const manager = runnerManager(runtime);
-      const runner = name === 'start_runner'
-        ? await manager.start(project)
-        : name === 'stop_runner'
-          ? await manager.stop(project)
-          : name === 'restart_runner'
-            ? await manager.restart(project)
-            : await manager.status(project);
+      const runner = name === 'restart_runner'
+        ? await manager.restart(project)
+        : await manager.status(project);
       return toolResult({ runner });
     }));
   }

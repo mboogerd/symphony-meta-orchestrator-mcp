@@ -239,7 +239,7 @@ test('CLI project validate defaults to workspace phase and --live reports runner
   }
 });
 
-test('CLI runner start status stop covers local runner smoke path', () => {
+test('CLI runner restart and status remain while start and stop are gone', () => {
   const cwd = mkdtempSync(join(tmpdir(), 'mrb13-cli-runner-'));
   const repoPath = join(cwd, 'repo');
   const runnerPath = join(cwd, 'fake-runner.js');
@@ -271,13 +271,22 @@ test('CLI runner start status stop covers local runner smoke path', () => {
     })));
 
     const env = { ...process.env, SYMPHONY_LOG_LEVEL: 'silent', SYMPHONY_RUNNER_COMMAND: runnerPath, SYMPHONY_RUNNER_PORT: String(runnerPort) };
-    const start = spawnSync(process.execPath, ['src/cli/index.ts', 'runner', 'start', '--config', configPath], {
+    const removedStart = spawnSync(process.execPath, ['src/cli/index.ts', 'runner', 'start', '--config', configPath], {
       cwd: process.cwd(),
       encoding: 'utf8',
       env
     });
-    assert.equal(start.status, 0, start.stderr);
-    assert.equal(JSON.parse(start.stdout).runner.status.state, 'running');
+    assert.equal(removedStart.status, 1);
+    assert.match(removedStart.stderr, /Unknown command: runner/);
+
+    const restart = spawnSync(process.execPath, ['src/cli/index.ts', 'runner', 'restart', '--config', configPath], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      env
+    });
+    assert.equal(restart.status, 0, restart.stderr);
+    const restarted = JSON.parse(restart.stdout);
+    assert.equal(restarted.runner.status.state, 'running');
 
     const status = spawnSync(process.execPath, ['src/cli/index.ts', 'runner', 'status', '--config', configPath], {
       cwd: process.cwd(),
@@ -287,13 +296,21 @@ test('CLI runner start status stop covers local runner smoke path', () => {
     assert.equal(status.status, 0, status.stderr);
     assert.equal(JSON.parse(status.stdout).runner.state, 'running');
 
-    const stop = spawnSync(process.execPath, ['src/cli/index.ts', 'runner', 'stop', '--config', configPath], {
+    const removedStop = spawnSync(process.execPath, ['src/cli/index.ts', 'runner', 'stop', '--config', configPath], {
       cwd: process.cwd(),
       encoding: 'utf8',
       env
     });
-    assert.equal(stop.status, 0, stop.stderr);
-    assert.equal(JSON.parse(stop.stdout).runner.state, 'stopped');
+    assert.equal(removedStop.status, 1);
+    assert.match(removedStop.stderr, /Unknown command: runner/);
+
+    if (typeof restarted.runner.status.pid === 'number') {
+      try {
+        process.kill(restarted.runner.status.pid, 'SIGTERM');
+      } catch {
+        // Process may already have exited during cleanup.
+      }
+    }
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
