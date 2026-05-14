@@ -3,7 +3,7 @@ import { pathToFileURL } from 'node:url';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createRuntimeConfig } from '../config/runtime.ts';
 import { createLogger } from '../logging/logger.ts';
-import { createMcpServer } from './server.ts';
+import { createMcpServer, startAllRunners } from './server.ts';
 
 export type McpStdioOptions = {
   argv?: string[];
@@ -38,6 +38,7 @@ export async function startMcpStdio(options: McpStdioOptions = {}): Promise<void
   };
 
   await server.connect(transport);
+  await startAllRunners(runtime, logger);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

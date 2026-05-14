@@ -96,6 +96,31 @@ const STOP_TIMEOUT_MS = 5_000;
 const DEFAULT_READINESS_TIMEOUT_MS = Number.parseInt(process.env.SYMPHONY_RUNNER_READINESS_TIMEOUT_MS ?? '', 10) || 30_000;
 const DEFAULT_READINESS_POLL_INTERVAL_MS = Number.parseInt(process.env.SYMPHONY_RUNNER_READINESS_POLL_INTERVAL_MS ?? '', 10) || 500;
 const LOG_EXCERPT_LINES = 20;
+const DEFAULT_RUNNER_PORT = 4001;
+const DEFAULT_PORT_ALLOCATION_ATTEMPTS = 100;
+
+export async function allocatePort(startFrom = DEFAULT_RUNNER_PORT, options: { maxAttempts?: number } = {}): Promise<number> {
+  const firstPort = Math.trunc(startFrom);
+  const maxAttempts = Math.trunc(options.maxAttempts ?? DEFAULT_PORT_ALLOCATION_ATTEMPTS);
+  if (!Number.isInteger(firstPort) || firstPort < 1 || firstPort > 65_535) {
+    throw new Error(`Invalid runner port allocation start: ${startFrom}`);
+  }
+  if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
+    throw new Error(`Invalid runner port allocation attempts: ${options.maxAttempts}`);
+  }
+
+  for (let offset = 0; offset < maxAttempts; offset += 1) {
+    const port = firstPort + offset;
+    if (port > 65_535) {
+      break;
+    }
+    if (await isPortAvailable(port)) {
+      return port;
+    }
+  }
+
+  throw new Error(`No available runner port found starting at ${firstPort} after ${maxAttempts} attempts`);
+}
 
 export function createRunnerManager(options: RunnerManagerOptions = {}): RunnerManager {
   const now = options.now ?? (() => new Date());
@@ -161,7 +186,7 @@ export function createRunnerManager(options: RunnerManagerOptions = {}): RunnerM
         args: runnerCommand.args,
         cwd: runnerCommand.cwd,
         workflowPath: workflow.workflowPath,
-        dashboardUrl: projectDashboardUrl(project),
+        dashboardUrl: dashboardUrl(allocatedPort),
         logPath: paths.logPath,
         startedAt: now().toISOString(),
         latestHeartbeat: now().toISOString(),
@@ -448,7 +473,7 @@ function spawnRunner(
       ...process.env,
       SYMPHONY_WORKFLOW_PATH: workflow.workflowPath,
       SYMPHONY_RUNNER_PORT: String(command.port),
-      SYMPHONY_DASHBOARD_URL: projectDashboardUrl(project)
+      SYMPHONY_DASHBOARD_URL: dashboardUrl(command.port)
     }
   });
   child.unref();
@@ -566,7 +591,7 @@ function statusFromState(
     args: state.args ?? runnerArgs(project),
     cwd: state.cwd ?? runnerCwd(project, paths.workspaceRoot),
     workflowPath: state.workflowPath || paths.workflowPath,
-    dashboardUrl: state.dashboardUrl ?? projectDashboardUrl(project),
+    dashboardUrl: state.dashboardUrl ?? dashboardUrl(state.port) ?? projectDashboardUrl(project),
     logPath: state.logPath || paths.logPath,
     statePath: paths.statePath,
     latestHeartbeat: state.latestHeartbeat,
@@ -704,18 +729,15 @@ function runnerPort(project: ManagedProject): number | undefined {
 }
 
 async function resolveRunnerPort(project: ManagedProject): Promise<number> {
-  return runnerPort(project) ?? findAvailablePort();
+  return runnerPort(project) ?? allocatePort(DEFAULT_RUNNER_PORT);
 }
 
-async function findAvailablePort(): Promise<number> {
-  return new Promise((resolvePromise, reject) => {
+function isPortAvailable(port: number): Promise<boolean> {
+  return new Promise((resolvePromise) => {
     const server = createServer();
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      const port = typeof address === 'object' && address !== null ? address.port : undefined;
-      server.close(() => port === undefined ? reject(new Error('Unable to allocate runner port')) : resolvePromise(port));
-    });
+    server.once('error', () => resolvePromise(false));
+    server.once('listening', () => server.close(() => resolvePromise(true)));
+    server.listen(port, '127.0.0.1');
   });
 }
 

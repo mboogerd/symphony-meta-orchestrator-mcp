@@ -1,7 +1,7 @@
 export { createRuntimeConfig, resolveConfigPath } from './config/runtime.ts';
 export { loadEnvironment, parseDotEnv } from './config/env.ts';
 export { createLogger } from './logging/logger.ts';
-export { createMcpServer } from './mcp/server.ts';
+export { createMcpServer, startAllRunners } from './mcp/server.ts';
 export type { McpServerRuntimeConfig, McpServerServices } from './mcp/server.ts';
 export { handleMcpMessage } from './mcp/protocol.ts';
 export type { JsonRpcRequest, JsonRpcResponse, McpRuntimeConfig, McpRuntimeServices } from './mcp/protocol.ts';
@@ -30,7 +30,7 @@ export type {
   WorkflowSetupValidation,
   WorkflowSetupValidationPhase
 } from './services/workflow/index.ts';
-export { createIdleRunnerStatus, createRunnerManager } from './services/runner/index.ts';
+export { allocatePort, createIdleRunnerStatus, createRunnerManager } from './services/runner/index.ts';
 export type {
   RunnerManager,
   RunnerProcessState,
