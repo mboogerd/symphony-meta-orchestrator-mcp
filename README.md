@@ -70,6 +70,7 @@ SYMPHONY_CONFIG_PATH=
 SYMPHONY_LOG_LEVEL=info
 LINEAR_API_KEY=<linear-api-key>
 GITHUB_TOKEN=<github-token>
+LINEAR_TEAM_KEY=<linear-team-key>
 SYMPHONY_RUNNER_COMMAND="node"
 DEFAULT_SYMPHONY_WORKSPACES=/path/to/workspaces
 DEFAULT_SYMPHONY_LOGS=/path/to/logs
@@ -81,6 +82,11 @@ By default, the registry is loaded from
 `~/.config/symphony-meta-orchestrator/registry.yaml`. Set
 `SYMPHONY_CONFIG_PATH` or pass `--config` when you need a different registry
 file. `LINEAR_API_KEY` is required for Linear project and issue creation.
+`LINEAR_TEAM_KEY` is required for project-scoped Linear tools that resolve a
+registered Symphony project by name, including `create_project_issue`,
+`create_planned_issue_batch`, `promote_ready_issue`, and
+`link_project_issue_dependency`. Use `SYMPHONY_LINEAR_TEAM_KEY` only as a
+legacy alias when needed.
 Registry and runner status commands can run without it. `GITHUB_TOKEN` is
 optional for public repositories and is used when fetching repo-owned
 `WORKFLOW.md` templates from GitHub; private repositories or rate-limited

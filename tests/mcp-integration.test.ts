@@ -101,6 +101,7 @@ test('MCP integration creates planned Backlog issues and Linear dependencies wit
     const runtime = runtimeFor(fixture.configPath, {
       createLinearService: () => new LinearService({ client })
     });
+    runtime.env.LINEAR_TEAM_KEY = 'MRB';
     await callTool(runtime, 'register', 'register_project', { project: fixture.project });
 
     const response = await callTool(runtime, 'planned', 'create_planned_issue_batch', {
@@ -136,6 +137,36 @@ test('MCP integration creates planned Backlog issues and Linear dependencies wit
       relatedIssueId: 'issue-2',
       type: 'blocks'
     });
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('create_planned_issue_batch reports missing_team_key when LINEAR_TEAM_KEY is not configured', async () => {
+  const fixture = createProjectFixture('mrb125-missing-team-key-');
+  const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+
+  try {
+    const runtime = runtimeFor(fixture.configPath, {
+      createLinearService: () => new LinearService({ client: mockLinearClient(calls) })
+    });
+    runtime.env.LINEAR_TEAM_KEY = undefined;
+    runtime.env.SYMPHONY_LINEAR_TEAM_KEY = undefined;
+    await callTool(runtime, 'register', 'register_project', { project: fixture.project });
+
+    const response = await callTool(runtime, 'planned-missing-team-key', 'create_planned_issue_batch', {
+      projectId: fixture.project.id,
+      issues: [{ key: 'setup', title: 'Set up control plane' }]
+    });
+
+    assertJsonRpcOk(response, 'planned-missing-team-key');
+    const result = response.result as Record<string, unknown>;
+    assert.equal(result.isError, true);
+    const payload = toolPayload(response);
+    assert.equal(payload.status, 'error');
+    assert.equal(payload.error.code, 'missing_team_key');
+    assert.match(payload.error.message, /LINEAR_TEAM_KEY must be set/);
+    assert.deepEqual(calls, []);
   } finally {
     fixture.cleanup();
   }

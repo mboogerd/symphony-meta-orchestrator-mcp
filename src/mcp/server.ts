@@ -247,7 +247,7 @@ function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void
     description: 'Create one issue in a managed Linear project using registry defaults.',
     inputSchema: { projectId: requiredString, ...projectIssueSchema }
   }, async ({ projectId, ...issue }) => withToolErrors(async () => toolResult({
-    issue: await linear(runtime).createProjectIssue(await requireProject(runtime, projectId), issue)
+    issue: await projectScopedLinear(runtime).createProjectIssue(await requireProject(runtime, projectId), issue)
   })));
 
   server.registerTool('create_planned_issue_batch', {
@@ -258,7 +258,7 @@ function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void
       dependencies: z.array(z.object({ from: requiredString, blocks: requiredString }).strict()).optional()
     }
   }, async ({ projectId, issues, dependencies }) => withToolErrors(async () => toolResult({
-    batch: await linear(runtime).createPlannedIssueBatch(await requireProject(runtime, projectId), { issues, dependencies })
+    batch: await projectScopedLinear(runtime).createPlannedIssueBatch(await requireProject(runtime, projectId), { issues, dependencies })
   })));
 
   server.registerTool('create_linear_project_planned_issue_batch', {
@@ -278,14 +278,14 @@ function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void
     description: 'Explicitly move a managed-project issue from Backlog to Todo.',
     inputSchema: { projectId: requiredString, issueId: requiredString }
   }, async ({ projectId, issueId }) => withToolErrors(async () => toolResult({
-    issue: await linear(runtime).promoteReadyIssue(await requireProject(runtime, projectId), issueId)
+    issue: await projectScopedLinear(runtime).promoteReadyIssue(await requireProject(runtime, projectId), issueId)
   })));
 
   server.registerTool('link_project_issue_dependency', {
     description: 'Link two issues in a managed Linear project with a blocking dependency.',
     inputSchema: { projectId: requiredString, blockingIssueId: requiredString, blockedIssueId: requiredString }
   }, async ({ projectId, blockingIssueId, blockedIssueId }) => withToolErrors(async () => toolResult({
-    dependency: await linear(runtime).linkProjectIssueDependency(await requireProject(runtime, projectId), { blockingIssueId, blockedIssueId })
+    dependency: await projectScopedLinear(runtime).linkProjectIssueDependency(await requireProject(runtime, projectId), { blockingIssueId, blockedIssueId })
   })));
 
   server.registerTool('enable_project', {
@@ -391,6 +391,19 @@ function linear(runtime: McpServerRuntimeConfig) {
         apiKey: runtime.env.LINEAR_API_KEY,
         projectCache: new LinearProjectCache(service, teamKey)
       });
+}
+
+function projectScopedLinear(runtime: McpServerRuntimeConfig) {
+  const teamKey = runtime.env.LINEAR_TEAM_KEY ?? runtime.env.SYMPHONY_LINEAR_TEAM_KEY;
+  if (teamKey === undefined) {
+    throw new McpToolError(
+      'missing_team_key',
+      'LINEAR_TEAM_KEY must be set in the MCP server environment to use project-scoped Linear tools',
+      { env: ['LINEAR_TEAM_KEY', 'SYMPHONY_LINEAR_TEAM_KEY'] }
+    );
+  }
+
+  return linear(runtime);
 }
 
 function runnerManager(runtime: McpServerRuntimeConfig) {
