@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import YAML from 'yaml';
 import type { Environment } from '../../config/env.ts';
 import type { Logger } from '../../logging/logger.ts';
+import { createLinearService, LinearServiceError, type LinearProjectReference } from '../linear/index.ts';
 import { validateProjectRegistry, type ManagedProject, type ManagedProjectRegistry } from '../registry/index.ts';
 import { allocatePort, DEFAULT_RUNNER_PORT } from '../runner/ports.ts';
 
@@ -35,6 +36,8 @@ export type WorkflowSetupIssueCode =
   | 'workflow_prompt_missing'
   | 'linear_token_missing'
   | 'linear_project_slug_missing'
+  | 'linear_project_not_found'
+  | 'linear_project_lookup_failed'
   | 'runner_command_missing'
   | 'runner_command_probe_failed'
   | 'runner_cwd_missing'
@@ -97,6 +100,7 @@ export type WorkflowSetupValidationOptions = {
   phase?: WorkflowSetupValidationPhase;
   registry?: ManagedProjectRegistry;
   validateLinear?: boolean;
+  linear?: LinearProjectResolver;
   env?: Environment;
   fetch?: FetchFunction;
   sparseCloneWorkflowFile?: SparseCloneWorkflowFile;
@@ -105,6 +109,9 @@ export type WorkflowSetupValidationOptions = {
 };
 
 export type PortAvailabilityProbe = (port: number) => Promise<boolean>;
+export type LinearProjectResolver = {
+  resolveProjectSlug(projectSlug: string): Promise<LinearProjectReference | undefined>;
+};
 export type FetchFunction = typeof fetch;
 export type SparseCloneWorkflowFile = (githubUrl: string, workflowPath: string, defaultBranch: string) => Promise<string>;
 
@@ -436,13 +443,31 @@ async function validateLinear(project: ManagedProject, options: WorkflowSetupVal
   }
   if (!options.env?.LINEAR_API_KEY) {
     addIssue({ code: 'linear_token_missing', field: 'LINEAR_API_KEY', message: 'Linear API token is required when Linear validation is requested' });
-  }
-  const legacyProject = project as ManagedProject & { tracker?: { projectSlug?: string; projectId?: string } };
-  if (legacyProject.tracker === undefined) {
     return;
   }
-  if ((legacyProject.tracker.projectSlug ?? '').trim().length === 0) {
+  const legacyProject = project as ManagedProject & { tracker?: { projectSlug?: string; projectId?: string } };
+  const projectSlug = legacyProject.tracker?.projectSlug?.trim() ?? '';
+  if (projectSlug.length === 0) {
     addIssue({ code: 'linear_project_slug_missing', field: 'tracker.projectSlug', message: 'Linear project slug is required when Linear validation is requested' });
+    return;
+  }
+
+  const linear = options.linear ?? createLinearService({ apiKey: options.env.LINEAR_API_KEY });
+  try {
+    const resolvedProject = await linear.resolveProjectSlug(projectSlug);
+    if (resolvedProject === undefined) {
+      addIssue({
+        code: 'linear_project_not_found',
+        field: 'tracker.projectSlug',
+        message: `Linear project slug "${projectSlug}" did not resolve to an existing Linear project`
+      });
+    }
+  } catch (error) {
+    addIssue({
+      code: 'linear_project_lookup_failed',
+      field: 'tracker.projectSlug',
+      message: `Linear project slug lookup failed: ${error instanceof LinearServiceError ? error.message : String(error)}`
+    });
   }
 }
 

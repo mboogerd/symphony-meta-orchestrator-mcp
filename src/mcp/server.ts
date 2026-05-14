@@ -164,6 +164,7 @@ function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void
       registry: loadedRegistry,
       phase: live ? 'live' : readValidationPhase(phase),
       validateLinear,
+      linear: validateLinear === true ? linear(runtime) : undefined,
       env: runtime.env,
       portAvailable: runtime.mcpServices?.portAvailable
     });
