@@ -268,7 +268,8 @@ export class LinearService {
 
       const projects = await this.client.projects({
         ...(Object.keys(filter).length > 0 ? { filter } : {}),
-        first: 50
+        first: 50,
+        includeArchived: true
       });
       return Promise.all(projects.nodes.map(async (project) => this.toProjectLookupResult(project, 'find_project')));
     });
