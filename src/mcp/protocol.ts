@@ -524,6 +524,8 @@ function setupProjectSchema(): Record<string, unknown> {
     runnerPort: { type: 'integer', minimum: 1, maximum: 65535 },
     workspaceRoot: stringSchema(),
     logsRoot: stringSchema(),
+    remoteUrl: stringSchema(),
+    cloneSource: stringSchema(),
     linearProjectId: stringSchema(),
     startRunner: { type: 'boolean' }
   };
@@ -542,6 +544,8 @@ function readSetupProjectInput(value: Record<string, unknown>) {
     runnerPort,
     workspaceRoot: requiredString(value.workspaceRoot, 'workspaceRoot'),
     logsRoot: requiredString(value.logsRoot, 'logsRoot'),
+    remoteUrl: optionalString(value.remoteUrl),
+    cloneSource: optionalString(value.cloneSource),
     linearProjectId: optionalString(value.linearProjectId),
     startRunner: value.startRunner === true
   };
