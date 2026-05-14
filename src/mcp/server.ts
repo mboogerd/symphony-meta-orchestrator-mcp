@@ -13,7 +13,7 @@ import {
   ProjectRegistryValidationError
 } from '../services/registry/index.ts';
 import { projectSchemaErrorDetails, projectSchemaHelp } from '../services/registry/schema-help.ts';
-import { setupManagedProject, type RunnerBootstrapper } from '../services/onboarding/index.ts';
+import { setupManagedProject, setupProjectRecovery, type RunnerBootstrapper } from '../services/onboarding/index.ts';
 import { createRunnerManager, type RunnerManager } from '../services/runner/index.ts';
 import {
   type PortAvailabilityProbe,
@@ -218,7 +218,11 @@ function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void
       runnerBootstrap: runtime.mcpServices?.runnerBootstrap,
       env: runtime.env
     });
-    return toolResult({ setup }, setup.steps.some((step) => step.status === 'error'));
+    const isError = setup.steps.some((step) => step.status === 'error');
+    return toolResult({
+      setup,
+      ...(isError ? { recovery: setupProjectRecovery(args, setup) } : {})
+    }, isError);
   }));
 
   server.registerTool('create_issue', {

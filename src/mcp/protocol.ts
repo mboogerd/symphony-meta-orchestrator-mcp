@@ -2,7 +2,7 @@ import type { RuntimeConfig } from '../config/runtime.ts';
 import { packageInfo } from '../package-info.ts';
 import { LinearProjectCache } from '../services/linear/cache.ts';
 import { createLinearService, LinearServiceError, type LinearService } from '../services/linear/index.ts';
-import { setupManagedProject, type RunnerBootstrapper } from '../services/onboarding/index.ts';
+import { setupManagedProject, setupProjectRecovery, type RunnerBootstrapper } from '../services/onboarding/index.ts';
 import { createProjectRegistryService, ProjectRegistryValidationError, type ManagedProject } from '../services/registry/index.ts';
 import { projectSchemaErrorDetails, projectSchemaHelp } from '../services/registry/schema-help.ts';
 import { createRunnerManager, type RunnerManager } from '../services/runner/index.ts';
@@ -278,14 +278,19 @@ async function handleToolCall(message: JsonRpcRequest, runtime: McpRuntimeConfig
     }
 
     if (name === 'setup_project') {
-      const setup = await setupManagedProject(readSetupProjectInput(argumentsValue), {
+      const input = readSetupProjectInput(argumentsValue);
+      const setup = await setupManagedProject(input, {
         linear: linear(runtime),
         registry,
         runnerManager: runnerManager(runtime),
         runnerBootstrap: runtime.mcpServices?.runnerBootstrap,
         env: runtime.env
       });
-      return toolResult(message.id ?? null, { setup }, setup.steps.some((step) => step.status === 'error'));
+      const isError = setup.steps.some((step) => step.status === 'error');
+      return toolResult(message.id ?? null, {
+        setup,
+        ...(isError ? { recovery: setupProjectRecovery(input, setup) } : {})
+      }, isError);
     }
 
     if (name === 'create_issue') {

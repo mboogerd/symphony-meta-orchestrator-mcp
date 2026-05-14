@@ -41,6 +41,17 @@ export type SetupProjectResult = {
   steps: SetupProjectStepResult[];
 };
 
+export type SetupProjectRecovery = {
+  failedStep: SetupProjectStepName;
+  summary: string;
+  actions: string[];
+  retry: {
+    tool: 'setup_project';
+    input: Partial<SetupProjectInput>;
+    note: string;
+  };
+};
+
 export type SetupProjectServices = {
   linear: LinearService;
   registry: ProjectRegistryService;
@@ -135,6 +146,102 @@ export async function setupManagedProject(input: SetupProjectInput, services: Se
   }
 
   return { team, linearProject, project, workflow, runner, steps };
+}
+
+export function setupProjectRecovery(input: SetupProjectInput, setup: SetupProjectResult): SetupProjectRecovery | undefined {
+  const failedStep = setup.steps.find((step) => step.status === 'error');
+  if (failedStep === undefined) {
+    return undefined;
+  }
+
+  const retryInput: Partial<SetupProjectInput> = {
+    name: input.name,
+    teamKey: input.teamKey,
+    githubUrl: input.githubUrl
+  };
+  if (input.startRunner !== undefined) {
+    retryInput.startRunner = input.startRunner;
+  }
+  if (setup.linearProject?.id !== undefined) {
+    retryInput.linearProjectId = setup.linearProject.id;
+  } else if (input.linearProjectId !== undefined) {
+    retryInput.linearProjectId = input.linearProjectId;
+  }
+
+  return {
+    failedStep: failedStep.name,
+    summary: setupRecoverySummary(failedStep, setup),
+    actions: setupRecoveryActions(failedStep, setup),
+    retry: {
+      tool: 'setup_project',
+      input: retryInput,
+      note: setup.linearProject?.id !== undefined
+        ? 'Retry with linearProjectId to reuse the Linear project that was already created or attached.'
+        : 'Retry after completing the recovery actions.'
+    }
+  };
+}
+
+function setupRecoverySummary(step: SetupProjectStepResult, setup: SetupProjectResult): string {
+  if (step.name === 'linearProject') {
+    return 'Linear project resolution failed before setup created registry or workflow state.';
+  }
+  if (step.name === 'bootstrap') {
+    return 'Runner bootstrap failed after Linear project resolution; no managed project registry entry was written.';
+  }
+  if (step.name === 'registry') {
+    return setup.linearProject === undefined
+      ? 'Registry write failed before a managed project could be registered.'
+      : 'Registry write failed after Linear project resolution; the Linear project may be orphaned until setup is retried with its explicit ID.';
+  }
+  if (step.name === 'workflow') {
+    return 'Workflow generation failed after the managed project was registered.';
+  }
+  return 'Runner startup failed after the managed project and workflow were created.';
+}
+
+function setupRecoveryActions(step: SetupProjectStepResult, setup: SetupProjectResult): string[] {
+  if (step.name === 'linearProject') {
+    return [
+      'Inspect setup.steps[0].error for the exact Linear or input validation problem.',
+      'If multiple same-name Linear projects exist, call find_linear_project with teamKey and pass the intended project as linearProjectId on retry.',
+      'If the GitHub URL is invalid, retry with a canonical https://github.com/owner/repo URL.'
+    ];
+  }
+  if (step.name === 'bootstrap') {
+    return [
+      'Set SYMPHONY_RUNNER_COMMAND to an executable runner, or fix SYMPHONY_RUNNER_REPOSITORY/bootstrap access.',
+      ...linearProjectRetryActions(setup),
+      'Retry setup_project; no registry entry should need manual cleanup from this failed attempt.'
+    ];
+  }
+  if (step.name === 'registry') {
+    return [
+      'Inspect setup.steps for the registry error, especially duplicate id or githubUrl conflicts.',
+      'If the registry already contains the intended project, use list_projects/get_project instead of creating a duplicate.',
+      'If setup created or attached the intended Linear project, retry setup_project with recovery.retry.input.linearProjectId so the same Linear project is reused.',
+      'If the Linear project is not intended, archive or delete it in Linear before retrying with corrected name/githubUrl.'
+    ];
+  }
+  if (step.name === 'workflow') {
+    return [
+      'Inspect setup.steps for the workflow error and fix the workspace, repository, or workflow template problem.',
+      'Use get_project to confirm the managed project registry entry exists before retrying.',
+      ...linearProjectRetryActions(setup),
+      'Retry setup_project; setup will resume from the existing registry entry when id and githubUrl match.'
+    ];
+  }
+  return [
+    'Inspect setup.steps for the runner startup error and fix the runner command, port, or logsRoot problem.',
+    'Use get_project to confirm the managed project registry entry exists.',
+    'Retry setup_project with startRunner true after fixing the runner issue, or call enable_project for the registered project.'
+  ];
+}
+
+function linearProjectRetryActions(setup: SetupProjectResult): string[] {
+  return setup.linearProject?.id === undefined ? [] : [
+    `Use Linear project "${setup.linearProject.id}" on retry by passing recovery.retry.input.linearProjectId.`
+  ];
 }
 
 type RegistryMatch = {
