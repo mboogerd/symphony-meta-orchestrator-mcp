@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -146,6 +147,7 @@ test('MCP integration can set up a managed project from an existing Linear proje
   const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
 
   try {
+    configureGitOrigin(fixture.repoPath);
     const runtime = runtimeFor(fixture.configPath, {
       createLinearService: () => new LinearService({ client: mockLinearClient(calls) })
     });
@@ -202,6 +204,43 @@ test('MCP integration rejects an existing Linear project outside the resolved te
     ]);
     assert.equal(payload.setup.steps[0].error.code, 'project_not_found');
     assert.deepEqual(calls.map((call) => call.method), ['teams', 'teams', 'team.projects']);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('MCP integration rejects setup for a git repo without an origin remote', async () => {
+  const fixture = createProjectFixture('mrb96-no-remote-');
+  const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+
+  try {
+    initGitRepo(fixture.repoPath);
+    const runtime = runtimeFor(fixture.configPath, {
+      createLinearService: () => new LinearService({ client: mockLinearClient(calls) })
+    });
+
+    const response = await callTool(runtime, 'setup-no-remote', 'setup_project', {
+      name: 'No Remote Project',
+      teamKey: 'MRB',
+      repoPath: fixture.repoPath,
+      runnerPort: fixture.project.symphony.runnerPort,
+      workspaceRoot: fixture.workspacePath,
+      logsRoot: fixture.logsPath
+    });
+
+    assertJsonRpcOk(response, 'setup-no-remote');
+    const result = response.result as Record<string, unknown>;
+    assert.equal(result.isError, true);
+    const payload = toolPayload(response);
+    assert.equal(payload.status, 'invalid');
+    assert.deepEqual(payload.setup.steps.map((step: { name: string; status: string }) => `${step.name}:${step.status}`), [
+      'linearProject:ok',
+      'registry:error'
+    ]);
+    assert.equal(payload.setup.steps[1].error.code, 'repo_remote_missing');
+    assert.equal(payload.setup.steps[1].error.field, 'repo.remoteUrl');
+    assert.match(payload.setup.steps[1].error.message, /Git origin remote is not configured/);
+    assert.equal(payload.setup.project, undefined);
   } finally {
     fixture.cleanup();
   }
@@ -380,6 +419,16 @@ function createProjectFixture(prefix: string, options: { writeWorkflow?: boolean
     project,
     cleanup: () => rmSync(root, { recursive: true, force: true })
   };
+}
+
+function configureGitOrigin(repoPath: string): void {
+  initGitRepo(repoPath);
+  execFileSync('git', ['-C', repoPath, 'remote', 'add', 'origin', 'https://example.test/repo.git']);
+}
+
+function initGitRepo(repoPath: string): void {
+  rmSync(join(repoPath, '.git'), { recursive: true, force: true });
+  execFileSync('git', ['init', '-b', 'main', repoPath]);
 }
 
 function runtimeFor(configPath: string, services: NonNullable<Parameters<typeof handleMcpMessage>[1]['mcpServices']> = {}) {
