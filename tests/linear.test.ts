@@ -849,3 +849,37 @@ test('Linear service exposes structured errors for callers', async () => {
     }
   );
 });
+
+test('Linear service preserves structured SDK error details', async () => {
+  const sdkError = new Error('Argument Validation Error') as Error & {
+    errors: Array<Record<string, unknown>>;
+  };
+  sdkError.errors = [{
+    message: 'Argument Validation Error',
+    path: ['issueCreate'],
+    extensions: {
+      code: 'ARGUMENT_VALIDATION_ERROR',
+      argumentName: 'input',
+      issues: [{ path: ['teamId'], message: 'Required' }]
+    }
+  }];
+
+  const service = createLinearService({
+    client: fakeClient({
+      async createIssue() {
+        throw sdkError;
+      }
+    })
+  });
+
+  await assert.rejects(
+    service.createIssue({ title: 'test', teamKey: 'MRB' }),
+    (error) => {
+      assert.ok(error instanceof LinearServiceError);
+      assert.equal(error.code, 'linear_sdk_error');
+      assert.equal(error.operation, 'create_issue');
+      assert.deepEqual(error.details, { errors: sdkError.errors });
+      return true;
+    }
+  );
+});
