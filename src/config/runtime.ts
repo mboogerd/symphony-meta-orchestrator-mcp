@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { loadEnvironment, type Environment, type LoadedEnvironment } from './env.ts';
 import { normalizeLogLevel, type LogLevel } from '../logging/logger.ts';
 
@@ -42,7 +43,9 @@ export function resolveConfigPath(
   cwd: string = process.cwd()
 ): string {
   const argumentPath = readOption(argv, ['--config', '--config-path']);
-  const configuredPath = argumentPath ?? env.SYMPHONY_CONFIG_PATH ?? 'symphony.registry.yaml';
+  const configuredPath = argumentPath
+    ?? env.SYMPHONY_CONFIG_PATH
+    ?? join(homedir(), '.config', 'symphony-meta-orchestrator', 'registry.yaml');
   return resolve(cwd, configuredPath);
 }
 

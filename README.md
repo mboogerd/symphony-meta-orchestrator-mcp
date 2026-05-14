@@ -24,11 +24,11 @@ npm run dev
 npm run build
 npm test
 npm run cli -- health
-npm run cli -- projects list --config symphony.registry.yaml
-npm run cli -- project validate --config symphony.registry.yaml
-npm run cli -- project validate --config symphony.registry.yaml --live
-npm run cli -- workflow render --config symphony.registry.yaml --project meta-orchestrator
-npm run cli -- runner status --config symphony.registry.yaml --project meta-orchestrator
+npm run cli -- projects list
+npm run cli -- project validate
+npm run cli -- project validate --live
+npm run cli -- workflow render --project meta-orchestrator
+npm run cli -- runner status --project meta-orchestrator
 npm run mcp
 ```
 
@@ -65,7 +65,8 @@ boundaries are mocked as follows:
 Required local environment:
 
 ```sh
-SYMPHONY_CONFIG_PATH=./symphony.registry.yaml
+# Optional registry override. Defaults to ~/.config/symphony-meta-orchestrator/registry.yaml.
+SYMPHONY_CONFIG_PATH=
 SYMPHONY_LOG_LEVEL=info
 LINEAR_API_KEY=<linear-api-key>
 SYMPHONY_RUNNER_COMMAND="node"
@@ -75,8 +76,11 @@ SYMPHONY_RUNNER_READINESS_TIMEOUT_MS=30000
 SYMPHONY_RUNNER_READINESS_POLL_INTERVAL_MS=500
 ```
 
-`LINEAR_API_KEY` is required for Linear project and issue creation. Registry,
-workflow, and runner status commands can run without it. Override
+By default, the registry is loaded from
+`~/.config/symphony-meta-orchestrator/registry.yaml`. Set
+`SYMPHONY_CONFIG_PATH` or pass `--config` when you need a different registry
+file. `LINEAR_API_KEY` is required for Linear project and issue creation.
+Registry, workflow, and runner status commands can run without it. Override
 `SYMPHONY_RUNNER_COMMAND` during local tests when you want the runner manager to
 launch a known local executable instead of the registry command. Runner launch
 arguments are not parsed from this environment variable; configure stable
@@ -340,27 +344,27 @@ that points at this repository plus a disposable workspace/logs directory.
 2. Confirm the project registry is visible:
 
    ```sh
-   npm run cli -- projects list --config symphony.registry.yaml
+   npm run cli -- projects list
    ```
 
 3. Render and validate the runner handoff:
 
    ```sh
-   npm run cli -- workflow render --config symphony.registry.yaml --project meta-orchestrator
-   npm run cli -- project validate --config symphony.registry.yaml --project meta-orchestrator
-   npm run cli -- project validate --config symphony.registry.yaml --project meta-orchestrator --live
+   npm run cli -- workflow render --project meta-orchestrator
+   npm run cli -- project validate --project meta-orchestrator
+   npm run cli -- project validate --project meta-orchestrator --live
    ```
 
 4. Exercise the local runner lifecycle:
 
    ```sh
-   npm run cli -- runner start --config symphony.registry.yaml --project meta-orchestrator
-   npm run cli -- runner status --config symphony.registry.yaml --project meta-orchestrator
-   npm run cli -- runner stop --config symphony.registry.yaml --project meta-orchestrator
+   npm run cli -- runner start --project meta-orchestrator
+   npm run cli -- runner status --project meta-orchestrator
+   npm run cli -- runner stop --project meta-orchestrator
    ```
 
 5. Start the MCP stdio server for client smoke validation:
 
    ```sh
-   npm run mcp -- --config symphony.registry.yaml
+   npm run mcp
    ```
