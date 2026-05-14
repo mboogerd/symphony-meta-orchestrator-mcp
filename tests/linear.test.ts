@@ -151,7 +151,8 @@ test('Linear service finds projects by case-insensitive name substring and slug'
       name: { containsIgnoreCase: 'meta-orchestrator' },
       slugId: { eq: 'symphony-meta-orchestrator-mcp-d4c50743a53d' }
     },
-    first: 50
+    first: 50,
+    includeArchived: true
   });
   assert.deepEqual(projects, [{
     id: 'project-1',
