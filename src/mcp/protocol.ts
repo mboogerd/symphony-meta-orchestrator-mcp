@@ -1,7 +1,7 @@
 import type { RuntimeConfig } from '../config/runtime.ts';
 import { packageInfo } from '../package-info.ts';
 import { createLinearService, LinearServiceError, type LinearService } from '../services/linear/index.ts';
-import { setupManagedProject } from '../services/onboarding/index.ts';
+import { setupManagedProject, type RunnerBootstrapper } from '../services/onboarding/index.ts';
 import { createProjectRegistryService, ProjectRegistryValidationError, type ManagedProject } from '../services/registry/index.ts';
 import { projectSchemaErrorDetails, projectSchemaHelp } from '../services/registry/schema-help.ts';
 import { createRunnerManager, type RunnerManager } from '../services/runner/index.ts';
@@ -30,6 +30,7 @@ export type JsonRpcResponse = {
 export type McpRuntimeServices = {
   createLinearService?: (runtime: RuntimeConfig) => LinearService;
   createRunnerManager?: (runtime: RuntimeConfig) => RunnerManager;
+  runnerBootstrap?: RunnerBootstrapper;
   portAvailable?: PortAvailabilityProbe;
 };
 
@@ -250,7 +251,8 @@ async function handleToolCall(message: JsonRpcRequest, runtime: McpRuntimeConfig
       const setup = await setupManagedProject(readSetupProjectInput(argumentsValue), {
         linear: linear(runtime),
         registry,
-        runnerManager: runnerManager(runtime)
+        runnerManager: runnerManager(runtime),
+        runnerBootstrap: runtime.mcpServices?.runnerBootstrap
       });
       return toolResult(message.id ?? null, { setup }, setup.steps.some((step) => step.status === 'error'));
     }

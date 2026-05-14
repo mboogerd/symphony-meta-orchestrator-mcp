@@ -11,7 +11,7 @@ import {
   ProjectRegistryValidationError
 } from '../services/registry/index.ts';
 import { projectSchemaErrorDetails, projectSchemaHelp } from '../services/registry/schema-help.ts';
-import { setupManagedProject } from '../services/onboarding/index.ts';
+import { setupManagedProject, type RunnerBootstrapper } from '../services/onboarding/index.ts';
 import { createRunnerManager, type RunnerManager } from '../services/runner/index.ts';
 import {
   type PortAvailabilityProbe,
@@ -49,6 +49,7 @@ const projectIssueSchema = {
 export type McpServerServices = {
   createLinearService?: (runtime: McpServerRuntimeConfig) => LinearService;
   createRunnerManager?: (runtime: McpServerRuntimeConfig) => RunnerManager;
+  runnerBootstrap?: RunnerBootstrapper;
   portAvailable?: PortAvailabilityProbe;
 };
 
@@ -172,7 +173,8 @@ function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void
     const setup = await setupManagedProject(args, {
       linear: linear(runtime),
       registry: registry(runtime),
-      runnerManager: runnerManager(runtime)
+      runnerManager: runnerManager(runtime),
+      runnerBootstrap: runtime.mcpServices?.runnerBootstrap
     });
     return toolResult({ setup }, setup.steps.some((step) => step.status === 'error'));
   }));

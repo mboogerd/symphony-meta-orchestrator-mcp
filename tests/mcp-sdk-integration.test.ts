@@ -193,6 +193,12 @@ test('SDK MCP setup_project matches compatibility tool behavior', async () => {
 
       assert.equal(payload.status, 'ok');
       assert.equal(payload.setup.project.id, 'sdk-project');
+      assert.equal(payload.setup.project.symphony.command, process.execPath);
+      assert.deepEqual(payload.setup.project.symphony.args, [
+        join(process.cwd(), 'test-symphony', 'bin', 'symphony'),
+        '--i-understand-that-this-will-be-running-without-the-usual-guardrails'
+      ]);
+      assert.equal(payload.setup.project.symphony.cwd, join(process.cwd(), 'test-symphony'));
       assert.deepEqual(payload.setup.steps.map((step: { name: string; status: string }) => `${step.name}:${step.status}`), [
         'linearProject:ok',
         'registry:ok',
@@ -402,7 +408,14 @@ function initGitRepo(repoPath: string): void {
 function runtimeFor(configPath: string, services: NonNullable<McpServerRuntimeConfig['mcpServices']> = {}): McpServerRuntimeConfig {
   return {
     ...createRuntimeConfig({ env: {}, argv: ['--config', configPath], cwd: process.cwd() }),
-    mcpServices: services
+    mcpServices: {
+      runnerBootstrap: async () => ({
+        command: process.execPath,
+        args: [join(process.cwd(), 'test-symphony', 'bin', 'symphony'), '--i-understand-that-this-will-be-running-without-the-usual-guardrails'],
+        cwd: join(process.cwd(), 'test-symphony')
+      }),
+      ...services
+    }
   };
 }
 
