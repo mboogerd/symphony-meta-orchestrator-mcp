@@ -132,6 +132,12 @@ test('MCP integration sets up a managed project end-to-end with defaults', async
     assert.equal(payload.setup.project.tracker.projectId, 'project-id');
     assert.equal(payload.setup.project.tracker.projectSlug, 'project-slug');
     assert.deepEqual(payload.setup.project.workflow, { source: 'generated', template: 'default' });
+    assert.equal(payload.setup.project.symphony.command, process.execPath);
+    assert.deepEqual(payload.setup.project.symphony.args, [
+      join(process.cwd(), 'test-symphony', 'bin', 'symphony'),
+      '--i-understand-that-this-will-be-running-without-the-usual-guardrails'
+    ]);
+    assert.equal(payload.setup.project.symphony.cwd, join(process.cwd(), 'test-symphony'));
     assert.equal(payload.setup.workflow.workflowPath, join(fixture.workspacePath, 'WORKFLOW.md'));
     assert.equal(existsSync(fixture.repoPath), true);
     assert.equal(payload.setup.runner.status.state, 'running');
@@ -171,6 +177,45 @@ test('MCP integration can set up a managed project from an existing Linear proje
     assert.deepEqual(calls[1].input, { filter: { id: { eq: 'linear-team-id' } }, first: 1 });
     assert.deepEqual(calls[2].input, { filter: { id: { eq: 'existing-project-id' } }, first: 1 });
   } finally {
+    fixture.cleanup();
+  }
+});
+
+test('MCP integration setup_project uses SYMPHONY_RUNNER_COMMAND without bootstrapping', async () => {
+  const fixture = createProjectFixture('mrb100-runner-env-');
+  const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+  const previousCommand = process.env.SYMPHONY_RUNNER_COMMAND;
+
+  try {
+    rmSync(fixture.repoPath, { recursive: true, force: true });
+    process.env.SYMPHONY_RUNNER_COMMAND = 'custom-symphony-runner';
+    const runtime = runtimeFor(fixture.configPath, {
+      createLinearService: () => new LinearService({ client: mockLinearClient(calls) }),
+      runnerBootstrap: async () => {
+        throw new Error('runner bootstrap should not be called when SYMPHONY_RUNNER_COMMAND is set');
+      }
+    });
+
+    const response = await callTool(runtime, 'setup-env-runner', 'setup_project', {
+      name: 'Env Runner Project',
+      teamKey: 'MRB',
+      repoPath: fixture.repoPath,
+      runnerPort: fixture.project.symphony.runnerPort,
+      workspaceRoot: fixture.workspacePath,
+      logsRoot: fixture.logsPath
+    });
+
+    assertJsonRpcOk(response, 'setup-env-runner');
+    const payload = toolPayload(response);
+    assert.equal(payload.setup.project.symphony.command, 'custom-symphony-runner');
+    assert.deepEqual(payload.setup.project.symphony.args, ['--i-understand-that-this-will-be-running-without-the-usual-guardrails']);
+    assert.equal(payload.setup.project.symphony.cwd, fixture.repoPath);
+  } finally {
+    if (previousCommand === undefined) {
+      delete process.env.SYMPHONY_RUNNER_COMMAND;
+    } else {
+      process.env.SYMPHONY_RUNNER_COMMAND = previousCommand;
+    }
     fixture.cleanup();
   }
 });
@@ -434,7 +479,14 @@ function initGitRepo(repoPath: string): void {
 function runtimeFor(configPath: string, services: NonNullable<Parameters<typeof handleMcpMessage>[1]['mcpServices']> = {}) {
   return {
     ...createRuntimeConfig({ env: {}, argv: ['--config', configPath], cwd: process.cwd() }),
-    mcpServices: services
+    mcpServices: {
+      runnerBootstrap: async () => ({
+        command: process.execPath,
+        args: [join(process.cwd(), 'test-symphony', 'bin', 'symphony'), '--i-understand-that-this-will-be-running-without-the-usual-guardrails'],
+        cwd: join(process.cwd(), 'test-symphony')
+      }),
+      ...services
+    }
   };
 }
 

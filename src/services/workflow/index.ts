@@ -394,7 +394,11 @@ async function validateRunner(
   } else {
     const found = await commandExists(project.symphony.command);
     if (!found) {
-      addIssue({ code: 'runner_command_missing', field: 'symphony.command', message: `Runner command "${project.symphony.command}" was not found on PATH` });
+      addIssue({
+        code: 'runner_command_missing',
+        field: 'symphony.command',
+        message: `Runner command "${project.symphony.command}" was not found on PATH. Install Symphony, set SYMPHONY_RUNNER_COMMAND to an executable runner, or rerun setup_project so the managed Symphony install can be bootstrapped.`
+      });
     }
   }
 

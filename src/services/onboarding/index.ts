@@ -1,6 +1,8 @@
 import { execFile } from 'node:child_process';
-import { access, mkdir } from 'node:fs/promises';
-import { basename, resolve } from 'node:path';
+import { constants } from 'node:fs';
+import { access, mkdir, readdir } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { basename, dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { LinearProjectReference, LinearService, LinearTeamReference } from '../linear/index.ts';
 import type { ManagedProject, ProjectRegistryService } from '../registry/index.ts';
@@ -8,6 +10,9 @@ import type { RunnerManager, RunnerStartResult } from '../runner/index.ts';
 import { writeProjectWorkflow, type WorkflowRenderResult } from '../workflow/index.ts';
 
 const execFileAsync = promisify(execFile);
+const DEFAULT_SYMPHONY_REPOSITORY = 'https://github.com/mboogerd/symphony.git';
+const DEFAULT_SYMPHONY_INSTALL_PATH = join(homedir(), '.local', 'share', 'symphony-meta-orchestrator', 'symphony');
+const SYMPHONY_GUARDRAIL_FLAG = '--i-understand-that-this-will-be-running-without-the-usual-guardrails';
 
 export type SetupProjectInput = {
   name: string;
@@ -42,7 +47,16 @@ export type SetupProjectServices = {
   linear: LinearService;
   registry: ProjectRegistryService;
   runnerManager: RunnerManager;
+  runnerBootstrap?: RunnerBootstrapper;
 };
+
+export type RunnerBootstrapResult = {
+  command: string;
+  args: string[];
+  cwd: string;
+};
+
+export type RunnerBootstrapper = (repoPath: string) => Promise<RunnerBootstrapResult>;
 
 export async function setupManagedProject(input: SetupProjectInput, services: SetupProjectServices): Promise<SetupProjectResult> {
   const steps: SetupProjectStepResult[] = [];
@@ -64,7 +78,7 @@ export async function setupManagedProject(input: SetupProjectInput, services: Se
   }
 
   try {
-    project = await buildManagedProject(input, team, linearProject);
+    project = await buildManagedProject(input, team, linearProject, services.runnerBootstrap ?? bootstrapSymphonyRunner);
     project = await services.registry.create(project);
     steps.push({ name: 'registry', status: 'ok', output: { project } });
   } catch (error) {
@@ -96,11 +110,17 @@ export async function setupManagedProject(input: SetupProjectInput, services: Se
   return { team, linearProject, project, workflow, runner, steps };
 }
 
-async function buildManagedProject(input: SetupProjectInput, team: LinearTeamReference, linearProject: LinearProjectReference): Promise<ManagedProject> {
+async function buildManagedProject(
+  input: SetupProjectInput,
+  team: LinearTeamReference,
+  linearProject: LinearProjectReference,
+  runnerBootstrap: RunnerBootstrapper
+): Promise<ManagedProject> {
   const repoPath = resolve(input.repoPath);
   const workspaceRoot = resolve(input.workspaceRoot);
   const logsRoot = resolve(input.logsRoot);
   const repoRemote = await resolveRepoRemote(repoPath);
+  const runner = await resolveDefaultRunner(repoPath, runnerBootstrap);
 
   return {
     id: slugify(input.name),
@@ -123,14 +143,9 @@ async function buildManagedProject(input: SetupProjectInput, team: LinearTeamRef
       template: 'default'
     },
     symphony: {
-      command: 'mise',
-      args: [
-        'exec',
-        '--',
-        './bin/symphony',
-        '--i-understand-that-this-will-be-running-without-the-usual-guardrails'
-      ],
-      cwd: repoPath,
+      command: runner.command,
+      args: runner.args,
+      cwd: runner.cwd,
       runnerPort: input.runnerPort,
       workspaceRoot,
       logsRoot,
@@ -172,6 +187,60 @@ async function isGitRepo(repoPath: string): Promise<boolean> {
   try {
     await access(resolve(repoPath, '.git'));
     return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveDefaultRunner(repoPath: string, runnerBootstrap: RunnerBootstrapper): Promise<RunnerBootstrapResult> {
+  const commandOverride = process.env.SYMPHONY_RUNNER_COMMAND?.trim();
+  if (commandOverride !== undefined && commandOverride.length > 0) {
+    return {
+      command: commandOverride,
+      args: [SYMPHONY_GUARDRAIL_FLAG],
+      cwd: repoPath
+    };
+  }
+
+  if (await executableExists(join(repoPath, 'bin', 'symphony'))) {
+    return {
+      command: 'mise',
+      args: ['exec', '--', './bin/symphony', SYMPHONY_GUARDRAIL_FLAG],
+      cwd: repoPath
+    };
+  }
+
+  return runnerBootstrap(repoPath);
+}
+
+export async function bootstrapSymphonyRunner(_repoPath: string): Promise<RunnerBootstrapResult> {
+  const installPath = resolve(process.env.SYMPHONY_RUNNER_INSTALL_DIR ?? DEFAULT_SYMPHONY_INSTALL_PATH);
+  const repository = process.env.SYMPHONY_RUNNER_REPOSITORY ?? DEFAULT_SYMPHONY_REPOSITORY;
+
+  if (!await directoryHasEntries(installPath)) {
+    await mkdir(dirname(installPath), { recursive: true });
+    await execFileAsync('git', ['clone', repository, installPath]);
+  }
+
+  return {
+    command: process.execPath,
+    args: [join(installPath, 'bin', 'symphony'), SYMPHONY_GUARDRAIL_FLAG],
+    cwd: installPath
+  };
+}
+
+async function executableExists(path: string): Promise<boolean> {
+  try {
+    await access(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function directoryHasEntries(path: string): Promise<boolean> {
+  try {
+    return (await readdir(path)).length > 0;
   } catch {
     return false;
   }
