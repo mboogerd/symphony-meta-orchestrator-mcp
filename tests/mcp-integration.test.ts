@@ -171,6 +171,7 @@ test('MCP integration sets up a managed project end-to-end with defaults', async
     assert.equal(payload.status, 'ok');
     assert.deepEqual(payload.setup.steps.map((step: { name: string; status: string }) => `${step.name}:${step.status}`), [
       'linearProject:ok',
+      'bootstrap:ok',
       'registry:ok',
       'workflow:ok',
       'runner:ok'
@@ -300,6 +301,87 @@ test('MCP integration setup_project uses SYMPHONY_RUNNER_COMMAND without bootstr
   }
 });
 
+test('MCP integration setup_project accepts explicit runner configuration', async () => {
+  const fixture = createProjectFixture('mrb102-runner-input-');
+  const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+
+  try {
+    rmSync(fixture.repoPath, { recursive: true, force: true });
+    const runtime = runtimeFor(fixture.configPath, {
+      createLinearService: () => new LinearService({ client: mockLinearClient(calls) }),
+      runnerBootstrap: async () => {
+        throw new Error('runner bootstrap should not be called when runnerCommand is set');
+      }
+    });
+
+    const response = await callTool(runtime, 'setup-input-runner', 'setup_project', {
+      name: 'Input Runner Project',
+      teamKey: 'MRB',
+      repoPath: fixture.repoPath,
+      runnerPort: fixture.project.symphony.runnerPort,
+      workspaceRoot: fixture.workspacePath,
+      logsRoot: fixture.logsPath,
+      runnerCommand: 'custom-runner',
+      runnerArgs: ['--serve', '--port', '5000'],
+      runnerCwd: fixture.workspacePath
+    });
+
+    assertJsonRpcOk(response, 'setup-input-runner');
+    const payload = toolPayload(response);
+    assert.equal(payload.status, 'ok');
+    assert.deepEqual(payload.setup.steps.map((step: { name: string; status: string }) => `${step.name}:${step.status}`), [
+      'linearProject:ok',
+      'bootstrap:ok',
+      'registry:ok',
+      'workflow:ok',
+      'runner:skipped'
+    ]);
+    assert.equal(payload.setup.project.symphony.command, 'custom-runner');
+    assert.deepEqual(payload.setup.project.symphony.args, ['--serve', '--port', '5000']);
+    assert.equal(payload.setup.project.symphony.cwd, fixture.workspacePath);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('MCP integration reports runner bootstrap failures in the bootstrap step', async () => {
+  const fixture = createProjectFixture('mrb102-bootstrap-error-');
+  const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+
+  try {
+    rmSync(fixture.repoPath, { recursive: true, force: true });
+    const runtime = runtimeFor(fixture.configPath, {
+      createLinearService: () => new LinearService({ client: mockLinearClient(calls) }),
+      runnerBootstrap: async () => {
+        throw new Error('Command failed: git clone https://github.com/mboogerd/symphony.git ...');
+      }
+    });
+
+    const response = await callTool(runtime, 'setup-bootstrap-error', 'setup_project', {
+      name: 'Bootstrap Error Project',
+      teamKey: 'MRB',
+      repoPath: fixture.repoPath,
+      runnerPort: fixture.project.symphony.runnerPort,
+      workspaceRoot: fixture.workspacePath,
+      logsRoot: fixture.logsPath
+    });
+
+    assertJsonRpcOk(response, 'setup-bootstrap-error');
+    const result = response.result as Record<string, unknown>;
+    assert.equal(result.isError, true);
+    const payload = toolPayload(response);
+    assert.equal(payload.status, 'invalid');
+    assert.deepEqual(payload.setup.steps.map((step: { name: string; status: string }) => `${step.name}:${step.status}`), [
+      'linearProject:ok',
+      'bootstrap:error'
+    ]);
+    assert.match(payload.setup.steps[1].error.message, /git clone https:\/\/github\.com\/mboogerd\/symphony\.git/);
+    assert.equal(payload.setup.project, undefined);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test('MCP integration rejects an existing Linear project outside the resolved team', async () => {
   const fixture = createProjectFixture('mrb75-wrong-team-');
   const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
@@ -360,12 +442,13 @@ test('MCP integration rejects setup for a git repo without an origin remote', as
     assert.equal(payload.status, 'invalid');
     assert.deepEqual(payload.setup.steps.map((step: { name: string; status: string }) => `${step.name}:${step.status}`), [
       'linearProject:ok',
+      'bootstrap:ok',
       'registry:error'
     ]);
-    assert.equal(payload.setup.steps[1].error.code, 'repo_remote_missing');
-    assert.equal(payload.setup.steps[1].error.field, 'repo.remoteUrl');
-    assert.match(payload.setup.steps[1].error.message, /Git origin remote is not configured/);
-    assert.match(payload.setup.steps[1].error.message, /git remote add origin <url>/);
+    assert.equal(payload.setup.steps[2].error.code, 'repo_remote_missing');
+    assert.equal(payload.setup.steps[2].error.field, 'repo.remoteUrl');
+    assert.match(payload.setup.steps[2].error.message, /Git origin remote is not configured/);
+    assert.match(payload.setup.steps[2].error.message, /git remote add origin <url>/);
     assert.equal(payload.setup.project, undefined);
   } finally {
     fixture.cleanup();
@@ -398,6 +481,7 @@ test('MCP integration accepts explicit setup remote values for a git repo withou
     assert.equal(payload.status, 'ok');
     assert.deepEqual(payload.setup.steps.map((step: { name: string; status: string }) => `${step.name}:${step.status}`), [
       'linearProject:ok',
+      'bootstrap:ok',
       'registry:ok',
       'workflow:ok',
       'runner:skipped'
@@ -436,6 +520,7 @@ test('MCP integration bootstraps missing workflow during project setup', async (
     assert.equal(payload.setup.project.id, 'partial-project');
     assert.deepEqual(payload.setup.steps.map((step: { name: string; status: string }) => `${step.name}:${step.status}`), [
       'linearProject:ok',
+      'bootstrap:ok',
       'registry:ok',
       'workflow:ok',
       'runner:skipped'
@@ -475,11 +560,12 @@ test('MCP integration returns partial setup details when repo directory cannot b
     assert.equal(payload.setup.project.id, 'repo-file-project');
     assert.deepEqual(payload.setup.steps.map((step: { name: string; status: string }) => `${step.name}:${step.status}`), [
       'linearProject:ok',
+      'bootstrap:ok',
       'registry:ok',
       'workflow:error'
     ]);
-    assert.equal(payload.setup.steps[2].error.name, 'Error');
-    assert.match(payload.setup.steps[2].error.message, /not a directory|EEXIST/);
+    assert.equal(payload.setup.steps[3].error.name, 'Error');
+    assert.match(payload.setup.steps[3].error.message, /not a directory|EEXIST/);
   } finally {
     fixture.cleanup();
   }

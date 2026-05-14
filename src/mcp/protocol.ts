@@ -111,7 +111,7 @@ export async function handleMcpMessage(message: unknown, runtime: McpRuntimeConf
             name: stringSchema(),
             slugId: stringSchema()
           }),
-          tool('setup_project', 'Set up a new managed project end-to-end: create or attach a Linear project, register defaults, generate workflow, and optionally start the runner.', setupProjectSchema(), ['name', 'teamKey', 'repoPath', 'runnerPort', 'workspaceRoot', 'logsRoot']),
+          tool('setup_project', 'Set up a new managed project end-to-end: create or attach a Linear project, resolve or bootstrap the runner, register defaults, generate workflow, and optionally start the runner. Pass runnerCommand, runnerArgs, and runnerCwd to configure the runner explicitly; otherwise setup_project uses SYMPHONY_RUNNER_COMMAND, repo bin/symphony, or bootstraps from SYMPHONY_RUNNER_REPOSITORY.', setupProjectSchema(), ['name', 'teamKey', 'repoPath', 'runnerPort', 'workspaceRoot', 'logsRoot']),
           tool('create_issue', 'Create one Linear issue.', linearIssueSchema(), ['title']),
           tool('create_issue_batch', 'Create multiple Linear issues.', {
             issues: { type: 'array', items: { type: 'object', properties: linearIssueSchema() } }
@@ -455,6 +455,16 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
 }
 
+function optionalStringArray(value: unknown, field: string): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    throw new McpToolError('invalid_input', `${field} must be an array of strings`, { field });
+  }
+  return value;
+}
+
 function errorCode(error: unknown): string {
   if (error instanceof McpToolError || error instanceof LinearServiceError) {
     return error.code;
@@ -564,6 +574,9 @@ function setupProjectSchema(): Record<string, unknown> {
     logsRoot: stringSchema(),
     remoteUrl: stringSchema(),
     cloneSource: stringSchema(),
+    runnerCommand: stringSchema(),
+    runnerArgs: { type: 'array', items: stringSchema() },
+    runnerCwd: stringSchema(),
     linearProjectId: stringSchema(),
     startRunner: { type: 'boolean' }
   };
@@ -584,6 +597,9 @@ function readSetupProjectInput(value: Record<string, unknown>) {
     logsRoot: requiredString(value.logsRoot, 'logsRoot'),
     remoteUrl: optionalString(value.remoteUrl),
     cloneSource: optionalString(value.cloneSource),
+    runnerCommand: optionalString(value.runnerCommand),
+    runnerArgs: optionalStringArray(value.runnerArgs, 'runnerArgs'),
+    runnerCwd: optionalString(value.runnerCwd),
     linearProjectId: optionalString(value.linearProjectId),
     startRunner: value.startRunner === true
   };

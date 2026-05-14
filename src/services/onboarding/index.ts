@@ -23,11 +23,14 @@ export type SetupProjectInput = {
   logsRoot: string;
   remoteUrl?: string;
   cloneSource?: string;
+  runnerCommand?: string;
+  runnerArgs?: string[];
+  runnerCwd?: string;
   startRunner?: boolean;
   linearProjectId?: string;
 };
 
-export type SetupProjectStepName = 'linearProject' | 'registry' | 'workflow' | 'runner';
+export type SetupProjectStepName = 'linearProject' | 'bootstrap' | 'registry' | 'workflow' | 'runner';
 
 export type SetupProjectStepResult = {
   name: SetupProjectStepName;
@@ -65,6 +68,7 @@ export async function setupManagedProject(input: SetupProjectInput, services: Se
   let team: LinearTeamReference | undefined;
   let linearProject: LinearProjectReference | undefined;
   let project: ManagedProject | undefined;
+  let runnerConfig: RunnerBootstrapResult | undefined;
   let workflow: WorkflowRenderResult | undefined;
   let runner: RunnerStartResult | undefined;
 
@@ -83,7 +87,15 @@ export async function setupManagedProject(input: SetupProjectInput, services: Se
   }
 
   try {
-    project = await buildManagedProject(input, team, linearProject, services.runnerBootstrap ?? bootstrapSymphonyRunner);
+    runnerConfig = await resolveDefaultRunner(input, services.runnerBootstrap ?? bootstrapSymphonyRunner);
+    steps.push({ name: 'bootstrap', status: 'ok', output: { runner: runnerConfig } });
+  } catch (error) {
+    steps.push({ name: 'bootstrap', status: 'error', error: structuredError(error) });
+    return { team, linearProject, steps };
+  }
+
+  try {
+    project = await buildManagedProject(input, team, linearProject, runnerConfig);
     project = await services.registry.create(project);
     steps.push({ name: 'registry', status: 'ok', output: { project } });
   } catch (error) {
@@ -119,13 +131,12 @@ async function buildManagedProject(
   input: SetupProjectInput,
   team: LinearTeamReference,
   linearProject: LinearProjectReference,
-  runnerBootstrap: RunnerBootstrapper
+  runner: RunnerBootstrapResult
 ): Promise<ManagedProject> {
   const repoPath = resolve(input.repoPath);
   const workspaceRoot = resolve(input.workspaceRoot);
   const logsRoot = resolve(input.logsRoot);
   const repoRemote = input.remoteUrl ?? input.cloneSource ?? await resolveRepoRemote(repoPath);
-  const runner = await resolveDefaultRunner(repoPath, runnerBootstrap);
 
   return {
     id: slugify(input.name),
@@ -197,7 +208,17 @@ async function isGitRepo(repoPath: string): Promise<boolean> {
   }
 }
 
-async function resolveDefaultRunner(repoPath: string, runnerBootstrap: RunnerBootstrapper): Promise<RunnerBootstrapResult> {
+async function resolveDefaultRunner(input: SetupProjectInput, runnerBootstrap: RunnerBootstrapper): Promise<RunnerBootstrapResult> {
+  const repoPath = resolve(input.repoPath);
+  const commandInput = input.runnerCommand?.trim();
+  if (commandInput !== undefined && commandInput.length > 0) {
+    return {
+      command: commandInput,
+      args: input.runnerArgs ?? [SYMPHONY_GUARDRAIL_FLAG],
+      cwd: input.runnerCwd !== undefined ? resolve(input.runnerCwd) : repoPath
+    };
+  }
+
   const commandOverride = process.env.SYMPHONY_RUNNER_COMMAND?.trim();
   if (commandOverride !== undefined && commandOverride.length > 0) {
     return {

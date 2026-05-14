@@ -201,6 +201,7 @@ test('SDK MCP setup_project matches compatibility tool behavior', async () => {
       assert.equal(payload.setup.project.symphony.cwd, join(process.cwd(), 'test-symphony'));
       assert.deepEqual(payload.setup.steps.map((step: { name: string; status: string }) => `${step.name}:${step.status}`), [
         'linearProject:ok',
+        'bootstrap:ok',
         'registry:ok',
         'workflow:ok',
         'runner:ok'

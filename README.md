@@ -123,17 +123,30 @@ and validate Linear-specific registry fields.
 
 The MCP `setup_project` tool provides the managed-project happy path in one
 call. It accepts `name`, `teamKey`, `repoPath`, `runnerPort`, `workspaceRoot`,
-`logsRoot`, optional `linearProjectId`, and optional `startRunner`. The tool
-resolves the Linear team, attaches an existing same-name Linear project in that
-team or creates one when none exists, validates any supplied Linear project
-belongs to that team, stores a registry entry with the documented defaults,
-renders `WORKFLOW.md`, and starts the runner when requested.
+`logsRoot`, optional `linearProjectId`, optional runner configuration
+(`runnerCommand`, `runnerArgs`, and `runnerCwd`), and optional `startRunner`.
+The tool resolves the Linear team, attaches an existing same-name Linear project
+in that team or creates one when none exists, validates any supplied Linear
+project belongs to that team, resolves or bootstraps the runner, stores a
+registry entry with the documented defaults, renders `WORKFLOW.md`, and starts
+the runner when requested.
+
+When `runnerCommand` is provided, `setup_project` uses it for the managed
+project's Symphony runner command. `runnerArgs` defaults to the unattended
+guardrail acknowledgement flag when omitted, and `runnerCwd` defaults to
+`repoPath`. Without an explicit `runnerCommand`, the tool first honors
+`SYMPHONY_RUNNER_COMMAND`, then uses an executable `bin/symphony` inside the
+target repository, and finally bootstraps a managed Symphony checkout. The
+managed checkout source defaults to the built-in repository URL and can be
+overridden with `SYMPHONY_RUNNER_REPOSITORY`; the install directory can be
+overridden with `SYMPHONY_RUNNER_INSTALL_DIR`.
 
 The response includes `setup.project`, `setup.linearProject`, `setup.team`,
 `setup.workflow`, optional `setup.runner`, and ordered `setup.steps`. If a later
 step fails after earlier work succeeded, the response is returned as an
 `invalid` tool result with the completed outputs preserved and the failing step
-containing a structured error.
+containing a structured error. Runner resolution and managed-checkout failures
+are reported in the `bootstrap` step.
 
 ### Runner readiness and lifecycle
 
