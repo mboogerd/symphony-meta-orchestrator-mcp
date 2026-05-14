@@ -389,6 +389,11 @@ test('MCP integration reports runner bootstrap failures in the bootstrap step', 
     ]);
     assert.match(payload.setup.steps[1].error.message, /git clone https:\/\/github\.com\/mboogerd\/symphony\.git/);
     assert.equal(payload.setup.project, undefined);
+    assert.equal(payload.recovery.failedStep, 'bootstrap');
+    assert.equal(payload.recovery.retry.tool, 'setup_project');
+    assert.equal(payload.recovery.retry.input.linearProjectId, 'project-id');
+    assert.match(payload.recovery.summary, /Runner bootstrap failed/);
+    assert.ok(payload.recovery.actions.some((action: string) => action.includes('SYMPHONY_RUNNER_COMMAND')));
   } finally {
     fixture.cleanup();
   }

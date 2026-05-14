@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import test from 'node:test';
-import { bootstrapSymphonyRunner, setupManagedProject } from '../src/services/onboarding/index.ts';
+import { bootstrapSymphonyRunner, setupManagedProject, setupProjectRecovery } from '../src/services/onboarding/index.ts';
 
 test('bootstrapSymphonyRunner clones the OpenAI Symphony repository by default', async () => {
   const fixture = createBootstrapFixture('mrb116-default-repo-', `#!/bin/sh
@@ -294,6 +294,45 @@ test('setupManagedProject rejects duplicate registry githubUrl before creating a
   assert.deepEqual(result.steps.map((step) => `${step.name}:${step.status}`), ['linearProject:error']);
   assert.equal(result.steps[0]?.error?.code, 'project_registry_conflict');
   assert.deepEqual(result.steps[0]?.error?.fields, ['githubUrl']);
+});
+
+test('setupProjectRecovery guides registry failures after Linear project creation', async () => {
+  const input = {
+    name: 'Registry Failure Project',
+    teamKey: 'MRB',
+    githubUrl: 'https://github.com/mboogerd/registry-failure.git'
+  };
+  const result = await setupManagedProject(input, {
+    env: { SYMPHONY_RUNNER_COMMAND: 'node' },
+    linear: {
+      ...fakeLinear(),
+      findProjectByNameForTeam: async () => undefined,
+      createProject: async () => ({
+        id: 'created-linear-project',
+        name: 'Registry Failure Project',
+        url: 'https://linear.app/mrboo/project/registry-failure-created'
+      })
+    } as never,
+    registry: {
+      load: async () => ({ version: 3, projects: [] }),
+      create: async () => {
+        throw new Error('duplicate project id registry-failure-project');
+      }
+    } as never,
+    runnerManager: { start: async () => ({}) } as never
+  });
+
+  assert.deepEqual(result.steps.map((step) => `${step.name}:${step.status}`), [
+    'linearProject:ok',
+    'bootstrap:ok',
+    'registry:error'
+  ]);
+  const recovery = setupProjectRecovery(input, result);
+  assert.equal(recovery?.failedStep, 'registry');
+  assert.equal(recovery?.retry.input.linearProjectId, 'created-linear-project');
+  assert.match(recovery?.summary ?? '', /Linear project may be orphaned/);
+  assert.ok(recovery?.actions.some((action) => action.includes('duplicate id or githubUrl')));
+  assert.ok(recovery?.actions.some((action) => action.includes('archive or delete it in Linear')));
 });
 
 test('setupManagedProject resumes an existing registry project with Linear linkage without creating a duplicate', async () => {
