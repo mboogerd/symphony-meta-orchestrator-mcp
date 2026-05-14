@@ -109,8 +109,8 @@ function buildManagedProject(input: SetupProjectInput, team: LinearTeamReference
       cloneSource: repoPath
     },
     workflow: {
-      source: 'repo',
-      path: 'WORKFLOW.md'
+      source: 'generated',
+      template: 'default'
     },
     symphony: {
       command: 'mise',
