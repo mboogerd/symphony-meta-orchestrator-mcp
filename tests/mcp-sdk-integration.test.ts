@@ -205,7 +205,7 @@ test('SDK MCP setup_project matches compatibility tool behavior', async () => {
         'workflow:ok',
         'runner:ok'
       ]);
-      assert.deepEqual(calls.map((call) => call.method), ['teams', 'createProject']);
+      assert.deepEqual(calls.map((call) => call.method), ['teams', 'teams', 'team.projects', 'createProject']);
       assert.deepEqual(runnerCalls, ['start:sdk-project']);
     } finally {
       await sdk.close();

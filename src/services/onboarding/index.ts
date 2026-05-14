@@ -68,9 +68,12 @@ export async function setupManagedProject(input: SetupProjectInput, services: Se
 
   try {
     team = await services.linear.resolveTeam(input.teamKey);
-    linearProject = input.linearProjectId
-      ? await services.linear.resolveProjectForTeam(input.linearProjectId, team.id)
-      : await services.linear.createProject({ name: input.name, teamId: team.id });
+    if (input.linearProjectId) {
+      linearProject = await services.linear.resolveProjectForTeam(input.linearProjectId, team.id);
+    } else {
+      linearProject = await services.linear.findProjectByNameForTeam(input.name, team.id)
+        ?? await services.linear.createProject({ name: input.name, teamId: team.id });
+    }
     steps.push({ name: 'linearProject', status: 'ok', output: { team, project: linearProject } });
   } catch (error) {
     steps.push({ name: 'linearProject', status: 'error', error: structuredError(error) });

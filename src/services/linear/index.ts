@@ -308,6 +308,41 @@ export class LinearService {
     });
   }
 
+  async findProjectByNameForTeam(name: string, teamId: string): Promise<LinearProjectReference | undefined> {
+    return this.wrap('find_project_for_team', async () => {
+      const projectName = name.trim();
+      if (!projectName) {
+        return undefined;
+      }
+
+      const teams = await this.client.teams({ filter: { id: { eq: teamId } }, first: 1 });
+      const team = teams.nodes[0];
+      const projects = team?.projects === undefined
+        ? { nodes: [] }
+        : typeof team.projects === 'function'
+          ? await team.projects({ filter: { name: { eqIgnoreCase: projectName } }, first: 2 })
+          : await team.projects;
+      const matchingProjects = projects.nodes.filter((project) => project.name.localeCompare(projectName, undefined, { sensitivity: 'accent' }) === 0);
+
+      if (matchingProjects.length > 1) {
+        throw new LinearServiceError(
+          'duplicate_project_name',
+          'find_project_for_team',
+          `Multiple Linear projects named "${projectName}" were found in the resolved team`,
+          { name: projectName, teamId, count: matchingProjects.length }
+        );
+      }
+
+      const project = matchingProjects[0];
+      return project === undefined
+        ? undefined
+        : {
+            ...this.toProjectReference(await this.hydrateProjectReference(project, 'find_project_for_team'), 'find_project_for_team'),
+            teamId
+          };
+    });
+  }
+
   async createIssueBatch(input: CreateLinearIssueBatchServiceInput): Promise<LinearIssueReference[]> {
     return this.wrap('create_issue_batch', async () => {
       const inputIssues = Array.isArray(input) ? input : input.issues;
