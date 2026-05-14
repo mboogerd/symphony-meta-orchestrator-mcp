@@ -276,6 +276,31 @@ test('SDK MCP create_issue_batch passes the service batch input shape', async ()
   }
 });
 
+test('SDK MCP list_teams returns Linear team discovery metadata', async () => {
+  const fixture = createProjectFixture('mrb72-sdk-teams-');
+  const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+
+  try {
+    const sdk = await createSdkHarness(runtimeFor(fixture.configPath, {
+      createLinearService: () => new LinearService({ client: mockLinearClient(calls) })
+    }));
+    try {
+      const payload = toolPayload(await sdk.client.callTool({
+        name: 'list_teams',
+        arguments: {}
+      }));
+
+      assert.equal(payload.status, 'ok');
+      assert.deepEqual(payload.teams, [{ id: 'linear-team-id', key: 'MRB', name: 'MRB', description: 'Main team' }]);
+      assert.deepEqual(calls, [{ method: 'teams', input: {} }]);
+    } finally {
+      await sdk.close();
+    }
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 function createProjectFixture(prefix: string) {
   const root = mkdtempSync(join(tmpdir(), prefix));
   const configPath = join(root, 'registry.yaml');
@@ -434,7 +459,7 @@ function mockLinearClient(calls: Array<{ method: string; input: Record<string, u
     },
     async teams(input) {
       calls.push({ method: 'teams', input: input ?? {} });
-      return { nodes: [{ id: 'linear-team-id', key: 'MRB', name: 'MRB' }] };
+      return { nodes: [{ id: 'linear-team-id', key: 'MRB', name: 'MRB', description: 'Main team' }] };
     },
     async workflowStates(input) {
       calls.push({ method: 'workflowStates', input: input ?? {} });

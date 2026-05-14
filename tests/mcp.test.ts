@@ -38,6 +38,7 @@ test('MCP tools/list exposes control-plane tools', async () => {
     'validate_project',
     'generate_workflow',
     'create_linear_project',
+    'list_teams',
     'setup_project',
     'create_issue',
     'create_issue_batch',
@@ -53,6 +54,32 @@ test('MCP tools/list exposes control-plane tools', async () => {
     'get_runner_status',
     'tail_runner_logs'
   ]);
+});
+
+test('MCP list_teams returns accessible Linear teams', async () => {
+  const runtime = createRuntimeConfig({ env: {}, argv: [], cwd: process.cwd() });
+  runtime.mcpServices = {
+    createLinearService: () => ({
+      async listTeams() {
+        return [{ id: 'team-1', key: 'MRB', name: 'Mrboo', description: 'Main team' }];
+      }
+    } as never)
+  };
+
+  const response = await handleMcpMessage({
+    jsonrpc: '2.0',
+    id: 'linear-teams',
+    method: 'tools/call',
+    params: { name: 'list_teams', arguments: {} }
+  }, runtime);
+
+  const result = response?.result as Record<string, unknown>;
+  const structured = result.structuredContent as { status: string; teams: unknown[] };
+  assert.equal(result.isError, false);
+  assert.deepEqual(structured, {
+    status: 'ok',
+    teams: [{ id: 'team-1', key: 'MRB', name: 'Mrboo', description: 'Main team' }]
+  });
 });
 
 test('MCP resources/list exposes managed projects from YAML registry', async () => {
