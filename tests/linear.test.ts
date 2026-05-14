@@ -68,7 +68,8 @@ test('Linear service creates projects and returns slug metadata', async () => {
     id: 'project-1',
     name: 'Meta',
     slugId: 'meta-123',
-    url: 'https://linear.app/acme/project/meta-123'
+    url: 'https://linear.app/acme/project/meta-123',
+    teamId: 'team-1'
   });
   assert.deepEqual(calls[0], { name: 'Meta', description: 'Milestone 1', leadId: undefined, teamIds: ['team-1'] });
 });
@@ -93,7 +94,8 @@ test('Linear service resolves project slug metadata when create payload omits it
     id: 'project-1',
     name: 'Meta',
     slugId: 'meta-123',
-    url: 'https://linear.app/acme/project/meta-123'
+    url: 'https://linear.app/acme/project/meta-123',
+    teamId: 'team-1'
   });
   assert.deepEqual(projectQueries[0], { filter: { id: { eq: 'project-1' } }, first: 1 });
 });
