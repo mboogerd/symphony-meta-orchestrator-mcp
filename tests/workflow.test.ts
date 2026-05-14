@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import YAML from 'yaml';
 import { renderProjectWorkflow, validateProjectWorkflowSetup, writeProjectWorkflow } from '../src/index.ts';
+import type { WorkflowSetupValidationOptions } from '../src/services/workflow/index.ts';
 import { managedProject } from './project-fixtures.ts';
 
 test('repo-owned workflow preserves prompt body and injects runtime front matter', async () => {
@@ -32,7 +33,8 @@ test('repo-owned workflow preserves prompt body and injects runtime front matter
       'Prompt line two.'
     ].join('\n'));
 
-    const workflow = await writeProjectWorkflow(managedProject({ repoPath, workspaceRoot, logsRoot }));
+    const project = managedProject({ repoPath, workspaceRoot, logsRoot });
+    const workflow = await writeProjectWorkflow(project, mockRepoWorkflowOptions(project));
     const parsed = parseWorkflow(workflow.content);
 
     assert.equal(workflow.workflowPath, join(workspaceRoot, 'WORKFLOW.md'));
@@ -75,7 +77,8 @@ test('writeProjectWorkflow renders when runner port is occupied', async () => {
     spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
     writeFileSync(join(repoPath, 'WORKFLOW.md'), 'Prompt body.');
 
-    const workflow = await writeProjectWorkflow(managedProject({ repoPath, workspaceRoot, logsRoot, runnerPort }));
+    const project = managedProject({ repoPath, workspaceRoot, logsRoot, runnerPort });
+    const workflow = await writeProjectWorkflow(project, mockRepoWorkflowOptions(project));
 
     assert.equal(workflow.workflowPath, join(workspaceRoot, 'WORKFLOW.md'));
     assert.equal(existsSync(workflow.workflowPath), true);
@@ -93,7 +96,8 @@ test('writeProjectWorkflow bootstraps missing repo-owned workflow path', async (
   try {
     spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
 
-    const workflow = await writeProjectWorkflow(managedProject({ repoPath, workspaceRoot: repoPath, logsRoot }));
+    const project = managedProject({ repoPath, workspaceRoot: repoPath, logsRoot });
+    const workflow = await writeProjectWorkflow(project, mockRepoWorkflowOptions(project));
     const parsed = parseWorkflow(workflow.content);
 
     assert.equal(workflow.workflowPath, join(repoPath, 'WORKFLOW.md'));
@@ -125,7 +129,7 @@ test('workflow safely quotes clone sources and targets in generated hook command
       }
     };
 
-    const parsed = parseWorkflow((await renderProjectWorkflow(project)).content);
+    const parsed = parseWorkflow((await renderProjectWorkflow(project, mockRepoWorkflowOptions(project))).content);
 
     assert.equal(
       parsed.frontMatter.hooks.after_create,
@@ -176,7 +180,7 @@ test('workflow renders custom tracker, agent, Codex command, and hook settings',
       }
     };
 
-    const parsed = parseWorkflow((await renderProjectWorkflow(project)).content);
+    const parsed = parseWorkflow((await renderProjectWorkflow(project, mockRepoWorkflowOptions(project))).content);
 
     assert.equal(parsed.body, 'Repo prompt body.');
     assert.deepEqual(parsed.frontMatter.tracker.active_states, ['Queued', 'Executing']);
@@ -238,7 +242,7 @@ test('generated workflow clones the registered githubUrl into the workspace root
       value: { workspaceRoot, logsRoot }
     });
 
-    const parsed = parseWorkflow((await renderProjectWorkflow(project)).content);
+    const parsed = parseWorkflow((await renderProjectWorkflow(project, mockRepoWorkflowOptions(project))).content);
 
     assert.equal(parsed.frontMatter.hooks.after_create, `git clone ${githubUrl} .`);
   } finally {
@@ -267,7 +271,7 @@ test('generated workflow validation does not require repo path to exist', async 
   }
 });
 
-test('repo-owned workflow reports missing template path', async () => {
+test('repo-owned workflow falls back when template path is missing', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'mrb15-workflow-missing-'));
   const repoPath = join(cwd, 'repo');
   const workspaceRoot = join(cwd, 'workspace');
@@ -275,10 +279,11 @@ test('repo-owned workflow reports missing template path', async () => {
 
   try {
     spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
-    const validation = await validateProjectWorkflowSetup(managedProject({ repoPath, workspaceRoot, logsRoot }));
+    const project = managedProject({ repoPath, workspaceRoot, logsRoot });
+    const validation = await validateProjectWorkflowSetup(project, mockRepoWorkflowOptions(project));
 
-    assert.equal(validation.ok, false);
-    assert.equal(validation.subsystems.workflow.errors[0]?.code, 'workflow_path_missing');
+    assert.equal(validation.ok, true);
+    assert.match(validation.workflow?.content ?? '', /You are working on a Linear ticket/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -295,7 +300,8 @@ test('workspace validation groups valid setup warnings by subsystem and phase', 
     spawnSync('git', ['-C', repoPath, 'remote', 'add', 'origin', 'https://github.com/example/repo.git'], { encoding: 'utf8' });
     writeFileSync(join(repoPath, 'WORKFLOW.md'), ['---', 'tracker:', '  kind: linear', '---', '', 'Prompt body.'].join('\n'));
 
-    const validation = await validateProjectWorkflowSetup(managedProject({ repoPath, workspaceRoot, logsRoot }));
+    const project = managedProject({ repoPath, workspaceRoot, logsRoot });
+    const validation = await validateProjectWorkflowSetup(project, mockRepoWorkflowOptions(project));
 
     assert.equal(validation.ok, true);
     assert.equal(validation.phase, 'workspace');
@@ -319,7 +325,8 @@ test('operational validation detects invalid workflow front matter', async () =>
     spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
     writeFileSync(join(repoPath, 'WORKFLOW.md'), ['---', '- nope', '---', '', 'Prompt body.'].join('\n'));
 
-    const validation = await validateProjectWorkflowSetup(managedProject({ repoPath, workspaceRoot: join(cwd, 'workspace'), logsRoot: join(cwd, 'logs') }));
+    const project = managedProject({ repoPath, workspaceRoot: join(cwd, 'workspace'), logsRoot: join(cwd, 'logs') });
+    const validation = await validateProjectWorkflowSetup(project, mockRepoWorkflowOptions(project));
 
     assert.equal(validation.ok, false);
     assert.equal(validation.subsystems.workflow.errors[0]?.code, 'workflow_render_failed');
@@ -338,7 +345,7 @@ test('operational validation requires Linear slug when Linear validation is requ
     const project = managedProject({ repoPath, workspaceRoot: join(cwd, 'workspace'), logsRoot: join(cwd, 'logs') });
     project.tracker.projectSlug = '';
 
-    const validation = await validateProjectWorkflowSetup(project, { validateLinear: true, env: { LINEAR_API_KEY: 'token' } });
+    const validation = await validateProjectWorkflowSetup(project, { validateLinear: true, env: { LINEAR_API_KEY: 'token' }, ...mockRepoWorkflowOptions(project) });
 
     assert.equal(validation.ok, false);
     assert.equal(validation.subsystems.linear.errors[0]?.code, 'linear_project_slug_missing');
@@ -358,6 +365,7 @@ test('render validation skips live runner port checks', async () => {
     const checkedPorts: number[] = [];
     const validation = await validateProjectWorkflowSetup(project, {
       phase: 'render',
+      ...mockRepoWorkflowOptions(project),
       portAvailable: async (port) => {
         checkedPorts.push(port);
         return false;
@@ -384,6 +392,7 @@ test('live validation detects unavailable runner port', async () => {
     const checkedPorts: number[] = [];
     const validation = await validateProjectWorkflowSetup(project, {
       phase: 'live',
+      ...mockRepoWorkflowOptions(project),
       portAvailable: async (port) => {
         checkedPorts.push(port);
         return false;
@@ -417,7 +426,7 @@ test('live validation warns when runner command exits during compatibility probe
       args: ['--i-understand-that-this-will-be-running-without-the-usual-guardrails', '--port', String(runnerPort)]
     });
 
-    const validation = await validateProjectWorkflowSetup(project, { phase: 'live' });
+    const validation = await validateProjectWorkflowSetup(project, { phase: 'live', ...mockRepoWorkflowOptions(project) });
 
     assert.equal(validation.ok, true);
     assert.equal(validation.subsystems.runner.ok, true);
@@ -445,7 +454,7 @@ test('live validation detects missing runner command and render validation detec
     });
     project.codex.turnSandbox = { type: 'readOnly' };
 
-    const validation = await validateProjectWorkflowSetup(project, { phase: 'live' });
+    const validation = await validateProjectWorkflowSetup(project, { phase: 'live', ...mockRepoWorkflowOptions(project) });
 
     assert.equal(validation.ok, false);
     assert.equal(validation.subsystems.runner.errors[0]?.code, 'runner_command_missing');
@@ -470,7 +479,7 @@ test('workflow renders network-enabled workspace-write and danger-full-access tu
       networkAccess: true,
       writableRoots: ['/tmp/cache']
     };
-    assert.deepEqual(parseWorkflow((await renderProjectWorkflow(project)).content).frontMatter.codex.turn_sandbox_policy, {
+    assert.deepEqual(parseWorkflow((await renderProjectWorkflow(project, mockRepoWorkflowOptions(project))).content).frontMatter.codex.turn_sandbox_policy, {
       type: 'workspaceWrite',
       networkAccess: true,
       writableRoots: ['/tmp/cache']
@@ -478,7 +487,7 @@ test('workflow renders network-enabled workspace-write and danger-full-access tu
 
     project.codex.threadSandbox = 'danger-full-access';
     project.codex.turnSandbox = { type: 'dangerFullAccess' };
-    assert.deepEqual(parseWorkflow((await renderProjectWorkflow(project)).content).frontMatter.codex.turn_sandbox_policy, {
+    assert.deepEqual(parseWorkflow((await renderProjectWorkflow(project, mockRepoWorkflowOptions(project))).content).frontMatter.codex.turn_sandbox_policy, {
       type: 'dangerFullAccess'
     });
   } finally {
@@ -500,10 +509,129 @@ test('operational validation requires network access for git and GitHub workflow
     });
     project.codex.turnSandbox = { type: 'workspaceWrite' };
 
-    const validation = await validateProjectWorkflowSetup(project);
+    const validation = await validateProjectWorkflowSetup(project, mockRepoWorkflowOptions(project));
 
     assert.equal(validation.ok, false);
     assert.equal(validation.subsystems.codexPolicy.errors[0]?.field, 'codex.turnSandbox.networkAccess');
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('uses fetched repo WORKFLOW.md when present', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb124-repo-workflow-'));
+  const repoPath = join(cwd, 'repo');
+  try {
+    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    writeFileSync(join(repoPath, 'WORKFLOW.md'), 'Fetched repo prompt.');
+    const project = managedProject({ repoPath, workspaceRoot: join(cwd, 'workspace'), logsRoot: join(cwd, 'logs') });
+
+    const parsed = parseWorkflow((await renderProjectWorkflow(project, mockRepoWorkflowOptions(project))).content);
+
+    assert.equal(parsed.body, 'Fetched repo prompt.');
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('falls back to Symphony shipped default when repo file absent', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb124-shipped-workflow-'));
+  const repoPath = join(cwd, 'repo');
+  const installDir = join(cwd, 'symphony');
+  const logs: Array<{ message: string; fields?: Record<string, unknown> }> = [];
+  try {
+    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    mkdirSync(join(installDir, 'elixir'), { recursive: true });
+    writeFileSync(join(installDir, 'elixir', 'WORKFLOW.md'), 'Shipped default prompt.');
+    const project = managedProject({ repoPath, workspaceRoot: join(cwd, 'workspace'), logsRoot: join(cwd, 'logs') });
+
+    const parsed = parseWorkflow((await renderProjectWorkflow(project, {
+      ...mockRepoWorkflowOptions(project),
+      env: { SYMPHONY_RUNNER_INSTALL_DIR: installDir },
+      logger: captureInfo(logs)
+    })).content);
+
+    assert.equal(parsed.body, 'Shipped default prompt.');
+    assert.equal(logs.some((entry) => entry.fields?.source === 'repo'), true);
+    assert.equal(logs.some((entry) => entry.fields?.source === 'symphony_shipped_default'), true);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('falls back to built-in default when neither source available', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb124-builtin-workflow-'));
+  const repoPath = join(cwd, 'repo');
+  const logs: Array<{ message: string; fields?: Record<string, unknown> }> = [];
+  try {
+    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    const project = managedProject({ repoPath, workspaceRoot: join(cwd, 'workspace'), logsRoot: join(cwd, 'logs') });
+
+    const parsed = parseWorkflow((await renderProjectWorkflow(project, {
+      ...mockRepoWorkflowOptions(project),
+      env: { SYMPHONY_RUNNER_INSTALL_DIR: join(cwd, 'missing-symphony') },
+      logger: captureInfo(logs)
+    })).content);
+
+    assert.match(parsed.body, /You are working on a Linear ticket/);
+    assert.equal(logs.some((entry) => entry.fields?.source === 'built_in_default'), true);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('records workflow_fetch_auth_required on 401', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb124-auth-workflow-'));
+  try {
+    const project = repoProjectWithoutLocalPath(cwd);
+    const validation = await validateProjectWorkflowSetup(project, {
+      fetch: async () => new Response('{}', { status: 401 }),
+      sparseCloneWorkflowFile: async () => 'unused'
+    });
+
+    assert.equal(validation.ok, false);
+    assert.equal(validation.subsystems.workflow.errors[0]?.code, 'workflow_fetch_auth_required');
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('records workflow_fetch_failed on clone error', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb124-clone-workflow-'));
+  try {
+    const project = repoProjectWithoutLocalPath(cwd);
+    const validation = await validateProjectWorkflowSetup(project, {
+      fetch: async () => Response.json({ default_branch: 'main' }),
+      sparseCloneWorkflowFile: async () => {
+        throw new Error('clone failed');
+      }
+    });
+
+    assert.equal(validation.ok, false);
+    assert.equal(validation.subsystems.workflow.errors[0]?.code, 'workflow_fetch_failed');
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('defaults workflow.path to WORKFLOW.md when omitted', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb124-default-path-'));
+  const seenPaths: string[] = [];
+  try {
+    const project = repoProjectWithoutLocalPath(cwd);
+    project.workflow = { source: 'repo' } as ManagedProject['workflow'];
+
+    const parsed = parseWorkflow((await renderProjectWorkflow(project, {
+      fetch: async () => Response.json({ default_branch: 'main' }),
+      sparseCloneWorkflowFile: async (_githubUrl, workflowPath) => {
+        seenPaths.push(workflowPath);
+        return 'Default path prompt.';
+      },
+      logger: captureInfo([])
+    })).content);
+
+    assert.equal(parsed.body, 'Default path prompt.');
+    assert.deepEqual(seenPaths, ['WORKFLOW.md']);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -516,5 +644,43 @@ function parseWorkflow(content: string): { frontMatter: Record<string, any>; bod
   return {
     frontMatter: YAML.parse(content.slice(4, endIndex)) as Record<string, any>,
     body: content.slice(endIndex + '\n---\n'.length).trim()
+  };
+}
+
+function mockRepoWorkflowOptions(project: ManagedProject, seenPaths: string[] = []): WorkflowSetupValidationOptions {
+  return {
+    fetch: async (_url, init) => {
+      assert.equal((init?.headers as Record<string, string> | undefined)?.Authorization, undefined);
+      return Response.json({ default_branch: 'main' });
+    },
+    sparseCloneWorkflowFile: async (_githubUrl, workflowPath) => {
+      seenPaths.push(workflowPath);
+      return readFileSync(join((project as ManagedProject & { repo?: { path?: string } }).repo?.path ?? '', workflowPath), 'utf8');
+    },
+    logger: captureInfo([])
+  };
+}
+
+function repoProjectWithoutLocalPath(cwd: string): ManagedProject {
+  const project = {
+    id: 'meta-orchestrator',
+    name: 'Meta Orchestrator',
+    githubUrl: 'https://github.com/mboogerd/symphony-meta-orchestrator-mcp.git',
+    workflow: { source: 'repo', path: 'WORKFLOW.md' },
+    codex: {
+      threadSandbox: 'workspace-write',
+      turnSandbox: { type: 'workspaceWrite', networkAccess: true }
+    }
+  } as ManagedProject;
+  Object.defineProperty(project, 'symphony', {
+    enumerable: false,
+    value: { workspaceRoot: join(cwd, 'workspace'), logsRoot: join(cwd, 'logs') }
+  });
+  return project;
+}
+
+function captureInfo(entries: Array<{ message: string; fields?: Record<string, unknown> }>): WorkflowSetupValidationOptions['logger'] {
+  return {
+    info: (message, fields) => entries.push({ message, fields })
   };
 }

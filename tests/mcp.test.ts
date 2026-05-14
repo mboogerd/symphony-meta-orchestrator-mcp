@@ -234,7 +234,7 @@ test('MCP resources/list exposes managed projects from YAML registry', async () 
   }
 });
 
-test('MCP validate_project returns structured invalid setup output', async () => {
+test('MCP validate_project succeeds without local repo path when fallback is available', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'mrb9-mcp-invalid-'));
   const configPath = join(cwd, 'registry.yaml');
 
@@ -253,12 +253,11 @@ test('MCP validate_project returns structured invalid setup output', async () =>
     }, runtime);
 
     const result = response?.result as Record<string, unknown>;
-    assert.equal(result.isError, true);
-    assert.equal((result.structuredContent as Record<string, unknown>).status, 'invalid');
+    assert.equal(result.isError, false);
+    assert.equal((result.structuredContent as Record<string, unknown>).status, 'ok');
     const text = ((result.content as Array<Record<string, string>>)[0]).text;
     const output = JSON.parse(text);
-    assert.equal(output.status, 'invalid');
-    assert.equal(output.setup[0].issues[0].code, 'workflow_path_missing');
+    assert.equal(output.status, 'ok');
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

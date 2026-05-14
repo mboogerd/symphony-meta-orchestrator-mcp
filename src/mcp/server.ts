@@ -173,7 +173,9 @@ function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void
   server.registerTool('generate_workflow', {
     description: 'Generate WORKFLOW.md for a managed project.',
     inputSchema: { projectId: requiredString }
-  }, async ({ projectId }) => withToolErrors(async () => toolResult({ workflow: await writeProjectWorkflow(await requireProject(runtime, projectId)) })));
+  }, async ({ projectId }) => withToolErrors(async () => toolResult({
+    workflow: await writeProjectWorkflow(await requireProject(runtime, projectId), { env: runtime.env })
+  })));
 
   server.registerTool('create_linear_project', {
     description: 'Create a Linear project.',
