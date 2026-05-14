@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
-import { mkdir, readdir } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { access, mkdir, readdir } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -324,6 +325,8 @@ function resolveProjectPaths(projectSlug: string, env: Environment): { workspace
 export async function bootstrapSymphonyRunner(_repoPath: string): Promise<RunnerBootstrapResult> {
   const installPath = resolve(process.env.SYMPHONY_RUNNER_INSTALL_DIR ?? DEFAULT_SYMPHONY_INSTALL_PATH);
   const repository = process.env.SYMPHONY_RUNNER_REPOSITORY ?? DEFAULT_SYMPHONY_REPOSITORY;
+  const elixirPath = join(installPath, 'elixir');
+  const releasePath = join(elixirPath, '_build', 'prod', 'rel', 'symphony', 'bin', 'symphony');
 
   if (!await directoryHasEntries(installPath)) {
     await mkdir(dirname(installPath), { recursive: true });
@@ -334,10 +337,35 @@ export async function bootstrapSymphonyRunner(_repoPath: string): Promise<Runner
     }
   }
 
+  if (!await fileIsAccessible(join(elixirPath, 'mix.exs'))) {
+    throw new SymphonyRunnerBootstrapError(
+      repository,
+      installPath,
+      new Error(`Expected an Elixir/Mix Symphony project at ${elixirPath}, but mix.exs was not found.`)
+    );
+  }
+
+  if (!await fileIsAccessible(releasePath, constants.X_OK)) {
+    try {
+      await execFileAsync('mix', ['deps.get'], { cwd: elixirPath, env: { ...process.env, MIX_ENV: 'prod' } });
+      await execFileAsync('mix', ['release'], { cwd: elixirPath, env: { ...process.env, MIX_ENV: 'prod' } });
+    } catch (error) {
+      throw new SymphonyRunnerBootstrapError(repository, installPath, error);
+    }
+  }
+
+  if (!await fileIsAccessible(releasePath, constants.X_OK)) {
+    throw new SymphonyRunnerBootstrapError(
+      repository,
+      installPath,
+      new Error(`Symphony release binary was not produced at ${releasePath}. Run mix deps.get && MIX_ENV=prod mix release in ${elixirPath}, or set SYMPHONY_RUNNER_COMMAND to an existing runner.`)
+    );
+  }
+
   return {
-    command: process.execPath,
-    args: [join(installPath, 'bin', 'symphony'), SYMPHONY_GUARDRAIL_FLAG],
-    cwd: installPath
+    command: releasePath,
+    args: [SYMPHONY_GUARDRAIL_FLAG],
+    cwd: elixirPath
   };
 }
 
@@ -349,7 +377,7 @@ class SymphonyRunnerBootstrapError extends Error {
   constructor(repository: string, installPath: string, cause: unknown) {
     const detail = cause instanceof Error ? `\n\n${cause.message}` : `\n\n${String(cause)}`;
     super(
-      `Bootstrap failed while cloning Symphony runner from ${repository} into ${installPath}. ` +
+      `Bootstrap failed while preparing Symphony runner from ${repository} into ${installPath}. ` +
       'Provide setup_project runnerCommand, set SYMPHONY_RUNNER_COMMAND to an executable runner, ' +
       'or override the bootstrap repository with SYMPHONY_RUNNER_REPOSITORY.' +
       detail
@@ -364,6 +392,15 @@ class SymphonyRunnerBootstrapError extends Error {
 async function directoryHasEntries(path: string): Promise<boolean> {
   try {
     return (await readdir(path)).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+async function fileIsAccessible(path: string, mode: number = constants.F_OK): Promise<boolean> {
+  try {
+    await access(path, mode);
+    return true;
   } catch {
     return false;
   }
