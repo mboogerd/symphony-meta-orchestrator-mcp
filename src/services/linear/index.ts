@@ -12,6 +12,7 @@ export type LinearProjectReference = {
   name: string;
   slugId: string;
   url: string;
+  teamId: string;
 };
 
 export type LinearTeamReference = {
@@ -177,7 +178,8 @@ export class LinearService {
 
   async createProject(input: CreateLinearProjectInput): Promise<LinearProjectReference> {
     return this.wrap('create_project', async () => {
-      const teamIds = [input.teamId ?? await this.findTeamId(input.teamKey)];
+      const teamId = input.teamId ?? await this.findTeamId(input.teamKey);
+      const teamIds = [teamId];
       const payload = await this.client.createProject({
         name: input.name,
         description: input.description,
@@ -185,7 +187,10 @@ export class LinearService {
         teamIds
       });
       const project = await requirePayloadEntity(payload.project, 'project', 'create_project');
-      return this.toProjectReference(await this.hydrateProjectReference(project, 'create_project'), 'create_project');
+      return {
+        ...this.toProjectReference(await this.hydrateProjectReference(project, 'create_project'), 'create_project'),
+        teamId
+      };
     });
   }
 
