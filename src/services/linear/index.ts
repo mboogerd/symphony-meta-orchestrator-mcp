@@ -699,9 +699,49 @@ export class LinearService {
         throw error;
       }
 
-      throw new LinearServiceError('linear_sdk_error', operation, error instanceof Error ? error.message : String(error), {}, error);
+      throw new LinearServiceError(
+        'linear_sdk_error',
+        operation,
+        error instanceof Error ? error.message : String(error),
+        extractSdkErrorDetails(error),
+        error
+      );
     }
   }
+}
+
+function extractSdkErrorDetails(error: unknown): Record<string, unknown> {
+  if (!isRecord(error)) {
+    return {};
+  }
+
+  const details: Record<string, unknown> = {};
+  copyKnownSdkErrorField(details, error, 'errors');
+  copyKnownSdkErrorField(details, error, 'data');
+  copyKnownSdkErrorField(details, error, 'extensions');
+
+  if (isRecord(error.response)) {
+    const response: Record<string, unknown> = {};
+    copyKnownSdkErrorField(response, error.response, 'errors');
+    copyKnownSdkErrorField(response, error.response, 'data');
+    copyKnownSdkErrorField(response, error.response, 'extensions');
+
+    if (Object.keys(response).length > 0) {
+      details.response = response;
+    }
+  }
+
+  return details;
+}
+
+function copyKnownSdkErrorField(target: Record<string, unknown>, source: Record<string, unknown>, field: string): void {
+  if (source[field] !== undefined) {
+    target[field] = source[field];
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 export function linearProjectUrlSlug(project: Pick<LinearProjectReference, 'slugId' | 'url'>): string {
