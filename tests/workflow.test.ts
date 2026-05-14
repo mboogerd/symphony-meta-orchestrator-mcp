@@ -216,6 +216,27 @@ test('generated workflow renders valid Symphony front matter and prompt body', a
   }
 });
 
+test('generated workflow validation does not require repo path to exist', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb80-generated-missing-repo-'));
+  const repoPath = join(cwd, 'missing-repo');
+  const workspaceRoot = join(cwd, 'workspace');
+  const logsRoot = join(cwd, 'logs');
+
+  try {
+    const project = managedProject({ repoPath, workspaceRoot, logsRoot });
+    project.workflow = { source: 'generated', template: 'default' };
+
+    const validation = await validateProjectWorkflowSetup(project);
+
+    assert.equal(validation.ok, true);
+    assert.equal(existsSync(repoPath), false);
+    assert.deepEqual(validation.subsystems.repo.errors, []);
+    assert.ok(validation.workflow);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test('repo-owned workflow reports missing template path', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'mrb15-workflow-missing-'));
   const repoPath = join(cwd, 'repo');

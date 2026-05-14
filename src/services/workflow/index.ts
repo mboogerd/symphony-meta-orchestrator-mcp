@@ -125,11 +125,11 @@ export async function validateProjectWorkflowSetup(project: ManagedProject, opti
 
   validateRegistry(options.registry, recordIssue('registry', 'schema'));
 
-  if (includesPhase(phase, 'render')) {
+  if (includesPhase(phase, 'render') && project.workflow.source === 'repo') {
     await validateRepoPath(repoPath, recordIssue('repo', 'render'));
   }
 
-  if (includesPhase(phase, 'workspace') && subsystemIssues.repo.errors.length === 0) {
+  if (includesPhase(phase, 'workspace') && project.workflow.source === 'repo' && subsystemIssues.repo.errors.length === 0) {
     await validateGitConfig(project, repoPath, recordIssue('repo', 'workspace'));
   }
 
