@@ -185,6 +185,41 @@ test('SDK MCP setup_project matches compatibility tool behavior', async () => {
   }
 });
 
+test('SDK MCP setup_project can attach an existing Linear project', async () => {
+  const fixture = createProjectFixture('mrb75-sdk-existing-');
+  const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+
+  try {
+    const runtime = runtimeFor(fixture.configPath, {
+      createLinearService: () => new LinearService({ client: mockLinearClient(calls) })
+    });
+    const sdk = await createSdkHarness(runtime);
+    try {
+      const payload = toolPayload(await sdk.client.callTool({
+        name: 'setup_project',
+        arguments: {
+          name: 'Existing SDK Project',
+          teamKey: 'MRB',
+          linearProjectId: 'existing-project-id',
+          repoPath: fixture.project.repo.path,
+          runnerPort: fixture.project.symphony.runnerPort,
+          workspaceRoot: fixture.project.symphony.workspaceRoot,
+          logsRoot: fixture.project.symphony.logsRoot
+        }
+      }));
+
+      assert.equal(payload.status, 'ok');
+      assert.equal(payload.setup.project.tracker.projectId, 'existing-project-id');
+      assert.equal(payload.setup.project.tracker.projectSlug, 'existing-project-slug');
+      assert.deepEqual(calls.map((call) => call.method), ['teams', 'projects']);
+    } finally {
+      await sdk.close();
+    }
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test('SDK MCP runner lifecycle tools use mocked runner and setup probes', async () => {
   const fixture = createProjectFixture('mrb27-sdk-runner-');
   const runnerCalls: string[] = [];
@@ -455,6 +490,16 @@ function mockLinearClient(calls: Array<{ method: string; input: Record<string, u
     },
     async projects(input) {
       calls.push({ method: 'projects', input: input ?? {} });
+      if (input?.filter?.id?.eq === 'existing-project-id' && input?.filter?.teams?.id?.eq === 'linear-team-id') {
+        return {
+          nodes: [{
+            id: 'existing-project-id',
+            name: 'Existing SDK Project',
+            slugId: 'existing-project-slug',
+            url: 'https://linear.example/existing-project'
+          }]
+        };
+      }
       return { nodes: [] };
     },
     async teams(input) {

@@ -274,6 +274,32 @@ export class LinearService {
     });
   }
 
+  async resolveProjectForTeam(projectId: string, teamId: string): Promise<LinearProjectReference> {
+    return this.wrap('resolve_project', async () => {
+      const projects = await this.client.projects({
+        filter: {
+          id: { eq: projectId },
+          teams: { id: { eq: teamId } }
+        },
+        first: 1
+      });
+      const project = projects.nodes[0];
+      if (!project) {
+        throw new LinearServiceError(
+          'project_not_found',
+          'resolve_project',
+          `Linear project "${projectId}" was not found in the resolved team`,
+          { projectId, teamId }
+        );
+      }
+
+      return {
+        ...this.toProjectReference(await this.hydrateProjectReference(project, 'resolve_project'), 'resolve_project'),
+        teamId
+      };
+    });
+  }
+
   async createIssueBatch(input: CreateLinearIssueBatchServiceInput): Promise<LinearIssueReference[]> {
     return this.wrap('create_issue_batch', async () => {
       const inputIssues = Array.isArray(input) ? input : input.issues;
