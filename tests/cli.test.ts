@@ -48,8 +48,7 @@ test('CLI projects:list reads managed projects from YAML registry', () => {
 
     assert.equal(result.status, 0, result.stderr);
     const output = JSON.parse(result.stdout);
-    assert.equal(output.projects[0].tracker.teamKey, 'MRB');
-    assert.equal(output.projects[0].repo.path, '/tmp/meta-orchestrator');
+    assert.equal(output.projects[0].githubUrl, 'git@github.com:mboogerd/symphony-meta-orchestrator-mcp.git');
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -98,7 +97,7 @@ test('CLI projects:validate fails with structured setup output for missing repo 
     assert.equal(result.status, 1);
     const output = JSON.parse(result.stdout);
     assert.equal(output.status, 'invalid');
-    assert.equal(output.setup[0].issues[0].code, 'repo_path_missing');
+    assert.equal(output.setup[0].issues[0].code, 'workflow_path_missing');
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -123,7 +122,7 @@ test('CLI project validate fails with structured setup output for missing repo p
     assert.equal(result.status, 1);
     const output = JSON.parse(result.stdout);
     assert.equal(output.status, 'invalid');
-    assert.equal(output.setup[0].issues[0].code, 'repo_path_missing');
+    assert.equal(output.setup[0].issues[0].code, 'workflow_path_missing');
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -216,7 +215,7 @@ test('CLI project validate defaults to workspace phase and --live reports runner
       command: 'definitely-missing-symphony-runner'
     })));
 
-    const env = { ...process.env, SYMPHONY_LOG_LEVEL: 'silent' };
+    const env = { ...process.env, SYMPHONY_LOG_LEVEL: 'silent', SYMPHONY_RUNNER_COMMAND: 'definitely-missing-symphony-runner' };
     const workspace = spawnSync(process.execPath, ['src/cli/index.ts', 'project', 'validate', '--config', configPath], {
       cwd: process.cwd(),
       encoding: 'utf8',
@@ -233,7 +232,7 @@ test('CLI project validate defaults to workspace phase and --live reports runner
     assert.equal(live.status, 1);
     const output = JSON.parse(live.stdout);
     assert.equal(output.setup[0].phase, 'live');
-    assert.equal(output.setup[0].issues[0].code, 'runner_command_missing');
+    assert.equal(output.setup[0].issues.some((issue: { code: string }) => issue.code === 'runner_command_missing'), true);
     assert.equal(output.setup[0].issues[0].phase, 'live');
   } finally {
     rmSync(cwd, { recursive: true, force: true });
@@ -271,7 +270,7 @@ test('CLI runner start status stop covers local runner smoke path', () => {
       command: runnerPath
     })));
 
-    const env = { ...process.env, SYMPHONY_LOG_LEVEL: 'silent' };
+    const env = { ...process.env, SYMPHONY_LOG_LEVEL: 'silent', SYMPHONY_RUNNER_COMMAND: runnerPath, SYMPHONY_RUNNER_PORT: String(runnerPort) };
     const start = spawnSync(process.execPath, ['src/cli/index.ts', 'runner', 'start', '--config', configPath], {
       cwd: process.cwd(),
       encoding: 'utf8',

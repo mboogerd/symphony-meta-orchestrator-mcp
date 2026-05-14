@@ -1,5 +1,6 @@
 import { IssueRelationType, LinearClient } from '@linear/sdk';
 import type { ManagedProject } from '../registry/index.ts';
+import type { LinearProjectCache, LinearProjectCacheEntry } from './cache.ts';
 
 export type LinearIssueReference = {
   id?: string;
@@ -121,6 +122,7 @@ export type PlannedIssueBatchPartialResult = PlannedIssueBatchResult & {
 export type LinearServiceOptions = {
   apiKey?: string;
   client?: LinearSdkClient;
+  projectCache?: LinearProjectCache;
 };
 
 type MaybePromise<T> = T | Promise<T>;
@@ -196,8 +198,10 @@ export class LinearServiceError extends Error {
 
 export class LinearService {
   private readonly client: LinearSdkClient;
+  private readonly projectCache?: LinearProjectCache;
 
   constructor(options: LinearServiceOptions = {}) {
+    this.projectCache = options.projectCache;
     if (options.client) {
       this.client = options.client;
       return;
@@ -398,18 +402,20 @@ export class LinearService {
   }
 
   async createProjectIssue(project: ManagedProject, input: CreateProjectIssueInput): Promise<LinearIssueReference> {
+    const scope = await this.resolveManagedProject(project);
     return this.createIssue({
       ...input,
-      teamId: project.tracker.teamId,
-      projectId: project.tracker.projectId
+      teamId: scope.teamId,
+      projectId: scope.projectId
     });
   }
 
   async createPlannedIssueBatch(project: ManagedProject, input: CreatePlannedIssueBatchInput): Promise<PlannedIssueBatchResult> {
+    const scope = await this.resolveManagedProject(project);
     return this.createPlannedIssueBatchForScope({
       operation: 'create_planned_issue_batch',
-      teamId: project.tracker.teamId,
-      projectId: project.tracker.projectId
+      teamId: scope.teamId,
+      projectId: scope.projectId
     }, input, true);
   }
 
@@ -487,15 +493,17 @@ export class LinearService {
   }
 
   async promoteReadyIssue(project: ManagedProject, issueId: string): Promise<LinearIssueReference> {
-    await this.assertManagedProjectIssue(project, issueId, 'promote_ready_issue');
-    return this.moveIssueToState(issueId, 'Todo', project.tracker.teamId);
+    const scope = await this.resolveManagedProject(project);
+    await this.assertScopedProjectIssue(scope, issueId, 'promote_ready_issue');
+    return this.moveIssueToState(issueId, 'Todo', scope.teamId);
   }
 
   async linkProjectIssueDependency(project: ManagedProject, input: CreateLinearDependencyInput): Promise<{ id: string; type: string }> {
+    const scope = await this.resolveManagedProject(project);
     return this.linkScopedIssueDependency({
       operation: 'link_project_issue_dependency',
-      teamId: project.tracker.teamId,
-      projectId: project.tracker.projectId
+      teamId: scope.teamId,
+      projectId: scope.projectId
     }, input, 'link_project_issue_dependency');
   }
 
@@ -572,10 +580,30 @@ export class LinearService {
   }
 
   private async assertManagedProjectIssue(project: ManagedProject, issueId: string, operation: string, role = 'issueId'): Promise<void> {
-    return this.assertScopedProjectIssue({
-      teamId: project.tracker.teamId,
-      projectId: project.tracker.projectId
-    }, issueId, operation, role);
+    return this.assertScopedProjectIssue(await this.resolveManagedProject(project), issueId, operation, role);
+  }
+
+  private async resolveManagedProject(project: ManagedProject): Promise<LinearProjectCacheEntry> {
+    if (this.projectCache) {
+      return this.projectCache.resolve(project.name);
+    }
+
+    const legacyProject = project as ManagedProject & { tracker?: { teamId: string; teamKey: string; projectId: string; projectSlug: string } };
+    if (legacyProject.tracker !== undefined) {
+      return {
+        teamId: legacyProject.tracker.teamId,
+        teamKey: legacyProject.tracker.teamKey,
+        projectId: legacyProject.tracker.projectId,
+        projectSlug: legacyProject.tracker.projectSlug
+      };
+    }
+
+    throw new LinearServiceError(
+      'project_cache_missing',
+      'resolve_managed_project',
+      'LinearProjectCache is required to resolve managed project IDs from registry project names',
+      { projectName: project.name }
+    );
   }
 
   private async assertScopedProjectIssue(scope: { teamId: string; projectId: string }, issueId: string, operation: string, role = 'issueId'): Promise<void> {

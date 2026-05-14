@@ -2,9 +2,9 @@ import { createServer } from 'node:net';
 import { access, constants, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import YAML from 'yaml';
-import { createLinearService } from '../linear/index.ts';
 import { validateProjectRegistry, type ManagedProject, type ManagedProjectRegistry } from '../registry/index.ts';
 
 const execFileAsync = promisify(execFile);
@@ -69,7 +69,6 @@ export type WorkflowSetupPhaseResults = Record<WorkflowSetupValidationPhase, Wor
 export type WorkflowRenderResult = {
   projectId: string;
   workflowPath: string;
-  repoPath: string;
   workspaceRoot: string;
   logsRoot: string;
   content: string;
@@ -80,7 +79,6 @@ export type WorkflowSetupValidation = {
   phase: WorkflowSetupValidationPhase;
   projectId: string;
   workflowPath: string;
-  repoPath: string;
   workspaceRoot: string;
   logsRoot: string;
   issues: WorkflowSetupIssue[];
@@ -101,15 +99,14 @@ export type WorkflowSetupValidationOptions = {
 export type PortAvailabilityProbe = (port: number) => Promise<boolean>;
 
 export async function renderProjectWorkflow(project: ManagedProject): Promise<WorkflowRenderResult> {
-  const repoPath = resolve(project.repo.path);
-  const workspaceRoot = resolve(project.symphony.workspaceRoot);
-  const logsRoot = resolve(project.symphony.logsRoot);
+  const workspaceRoot = projectWorkspaceRoot(project);
+  const logsRoot = projectLogsRoot(project);
   const workflowPath = join(workspaceRoot, 'WORKFLOW.md');
-  const template = await loadWorkflowTemplate(project, repoPath);
+  const template = await loadWorkflowTemplate(project, projectRepoPath(project) ?? workspaceRoot);
   const frontMatter = mergeWorkflowFrontMatter(template.frontMatter, project, workspaceRoot);
   const content = renderWorkflowDocument(frontMatter, template.body);
 
-  return { projectId: project.id, workflowPath, repoPath, workspaceRoot, logsRoot, content };
+  return { projectId: project.id, workflowPath, workspaceRoot, logsRoot, content };
 }
 
 export async function validateProjectWorkflowSetup(project: ManagedProject, options: WorkflowSetupValidationOptions = {}): Promise<WorkflowSetupValidation> {
@@ -117,26 +114,17 @@ export async function validateProjectWorkflowSetup(project: ManagedProject, opti
   const subsystemIssues = createSubsystems();
   const phaseIssues = createPhases();
   let workflow: WorkflowRenderResult | undefined;
-  const repoPath = resolve(project.repo.path);
-  const workspaceRoot = resolve(project.symphony.workspaceRoot);
-  const logsRoot = resolve(project.symphony.logsRoot);
+  const workspaceRoot = projectWorkspaceRoot(project);
+  const logsRoot = projectLogsRoot(project);
   const workflowPath = join(workspaceRoot, 'WORKFLOW.md');
 
   const recordIssue = issueRecorder(subsystemIssues, phaseIssues);
 
   validateRegistry(options.registry, recordIssue('registry', 'schema'));
 
-  if (includesPhase(phase, 'render') && project.workflow.source === 'repo') {
-    await validateRepoPath(repoPath, recordIssue('repo', 'render'));
-  }
-
-  if (includesPhase(phase, 'workspace') && project.workflow.source === 'repo' && subsystemIssues.repo.errors.length === 0) {
-    await validateGitConfig(project, repoPath, recordIssue('repo', 'workspace'));
-  }
-
   if (includesPhase(phase, 'render')) {
     if (project.workflow.source === 'repo') {
-      await validateRepoWorkflowPath(repoPath, project.workflow.path, recordIssue('workflow', 'render'));
+      await validateRepoWorkflowPath(projectRepoPath(project) ?? workspaceRoot, project.workflow.path, recordIssue('workflow', 'render'));
     }
 
     if (subsystemIssues.repo.errors.length === 0 && subsystemIssues.workflow.errors.length === 0) {
@@ -175,7 +163,6 @@ export async function validateProjectWorkflowSetup(project: ManagedProject, opti
     phase,
     projectId: project.id,
     workflowPath,
-    repoPath,
     workspaceRoot,
     logsRoot,
     issues,
@@ -285,61 +272,6 @@ function validateRegistry(registry: ManagedProjectRegistry | undefined, addIssue
   }
 }
 
-async function validateRepoPath(repoPath: string, addIssue: AddWorkflowSetupIssue): Promise<void> {
-  try {
-    const repoStat = await stat(repoPath);
-
-    if (!repoStat.isDirectory()) {
-      addIssue({
-        code: 'repo_path_not_directory',
-        field: 'repo.path',
-        message: 'Repo path exists but is not a directory',
-        path: repoPath
-      });
-      return;
-    }
-  } catch {
-    addIssue({
-      code: 'repo_path_missing',
-      field: 'repo.path',
-      message: 'Repo path does not exist',
-      path: repoPath
-    });
-    return;
-  }
-
-  try {
-    await access(join(repoPath, '.git'));
-  } catch {
-    addIssue({
-      code: 'repo_path_not_git_repo',
-      field: 'repo.path',
-      message: 'Repo path is not a git repository',
-      path: repoPath
-    });
-  }
-}
-
-async function validateGitConfig(project: ManagedProject, repoPath: string, addIssue: AddWorkflowSetupIssue): Promise<void> {
-  try {
-    const { stdout } = await execFileAsync('git', ['-C', repoPath, 'remote', 'get-url', 'origin']);
-    if (stdout.trim().length === 0) {
-      addIssue({ code: 'repo_remote_missing', field: 'repo.remoteUrl', message: 'Git origin remote is not configured' }, 'warning');
-    }
-  } catch {
-    addIssue({ code: 'repo_remote_missing', field: 'repo.remoteUrl', message: 'Git origin remote is not configured' }, 'warning');
-  }
-
-  try {
-    const { stdout } = await execFileAsync('git', ['-C', repoPath, 'show-ref', '--verify', `refs/heads/${project.repo.defaultBranch}`]);
-    if (stdout.trim().length === 0) {
-      addIssue({ code: 'repo_default_branch_missing', field: 'repo.defaultBranch', message: `Default branch "${project.repo.defaultBranch}" is not present locally` }, 'warning');
-    }
-  } catch {
-    addIssue({ code: 'repo_default_branch_missing', field: 'repo.defaultBranch', message: `Default branch "${project.repo.defaultBranch}" is not present locally` }, 'warning');
-  }
-}
-
 async function validateRepoWorkflowPath(repoPath: string, workflowPath: string, addIssue: AddWorkflowSetupIssue): Promise<void> {
   const path = resolve(repoPath, workflowPath);
   try {
@@ -376,7 +308,10 @@ async function validateRunner(
   addIssue: AddWorkflowSetupIssue,
   portAvailable: PortAvailabilityProbe
 ): Promise<void> {
-  const cwd = resolve(project.symphony.cwd ?? workspaceRoot);
+  const legacyProject = project as ManagedProject & { symphony?: { command?: string; cwd?: string; runnerPort?: number; args?: string[] } };
+  const command = process.env.SYMPHONY_RUNNER_COMMAND ?? legacyProject.symphony?.command ?? 'symphony';
+  const cwd = resolve(process.env.SYMPHONY_RUNNER_CWD ?? legacyProject.symphony?.cwd ?? workspaceRoot);
+  const runnerPort = Number(process.env.SYMPHONY_RUNNER_PORT ?? legacyProject.symphony?.runnerPort ?? '0');
   let blockingRunnerIssues = 0;
   try {
     const cwdStat = await stat(cwd);
@@ -389,33 +324,32 @@ async function validateRunner(
     addIssue({ code: 'runner_cwd_missing', field: 'symphony.cwd', message: 'Runner cwd does not exist', path: cwd });
   }
 
-  if (project.symphony.command.includes('/')) {
+  if (command.includes('/')) {
     try {
-      await access(resolve(project.symphony.command), constants.X_OK);
+      await access(resolve(command), constants.X_OK);
     } catch {
       blockingRunnerIssues += 1;
-      addIssue({ code: 'runner_command_not_executable', field: 'symphony.command', message: 'Runner command path is not executable', path: resolve(project.symphony.command) });
+      addIssue({ code: 'runner_command_not_executable', field: 'SYMPHONY_RUNNER_COMMAND', message: 'Runner command path is not executable', path: resolve(command) });
     }
   } else {
-    const found = await commandExists(project.symphony.command);
+    const found = await commandExists(command);
     if (!found) {
       blockingRunnerIssues += 1;
       addIssue({
         code: 'runner_command_missing',
-        field: 'symphony.command',
-        message: `Runner command "${project.symphony.command}" was not found on PATH. Install Symphony, set SYMPHONY_RUNNER_COMMAND to an executable runner, or rerun setup_project so the managed Symphony install can be bootstrapped.`
+        field: 'SYMPHONY_RUNNER_COMMAND',
+        message: `Runner command "${command}" was not found on PATH. Install Symphony or set SYMPHONY_RUNNER_COMMAND to an executable runner.`
       });
     }
   }
 
-  const isAvailable = await portAvailable(project.symphony.runnerPort);
-  if (!isAvailable) {
+  if (runnerPort > 0 && !await portAvailable(runnerPort)) {
     blockingRunnerIssues += 1;
-    addIssue({ code: 'runner_port_unavailable', field: 'symphony.runnerPort', message: `Runner port ${project.symphony.runnerPort} is already in use` });
+    addIssue({ code: 'runner_port_unavailable', field: 'SYMPHONY_RUNNER_PORT', message: `Runner port ${runnerPort} is already in use` });
   }
 
   if (blockingRunnerIssues === 0) {
-    await validateRunnerInvocation(project, cwd, addIssue);
+    await validateRunnerInvocation(command, legacyProject.symphony?.args, cwd, addIssue);
   }
 }
 
@@ -428,10 +362,10 @@ async function commandExists(command: string): Promise<boolean> {
   }
 }
 
-async function validateRunnerInvocation(project: ManagedProject, cwd: string, addIssue: AddWorkflowSetupIssue): Promise<void> {
-  const args = [...(project.symphony.args ?? []), '--help'];
+async function validateRunnerInvocation(command: string, configuredArgs: string[] | undefined, cwd: string, addIssue: AddWorkflowSetupIssue): Promise<void> {
+  const args = [...(configuredArgs ?? []), '--help'];
   try {
-    await execFileAsync(project.symphony.command, args, {
+    await execFileAsync(command, args, {
       cwd,
       timeout: 2_000,
       windowsHide: true
@@ -443,7 +377,7 @@ async function validateRunnerInvocation(project: ManagedProject, cwd: string, ad
 
     addIssue({
       code: 'runner_command_probe_failed',
-      field: 'symphony.command',
+      field: 'SYMPHONY_RUNNER_COMMAND',
       message: `Runner command exited during live probe. Live validation checks command existence and performs a warning-only compatibility probe, but does not guarantee full startup readiness. ${formatExecFailure(error)}`
     }, 'warning');
   }
@@ -489,27 +423,12 @@ async function validateLinear(project: ManagedProject, options: WorkflowSetupVal
   if (!options.env?.LINEAR_API_KEY) {
     addIssue({ code: 'linear_token_missing', field: 'LINEAR_API_KEY', message: 'Linear API token is required when Linear validation is requested' });
   }
-  if (project.tracker.projectSlug.trim().length === 0) {
-    addIssue({ code: 'linear_project_slug_missing', field: 'tracker.projectSlug', message: 'Linear project slug is required when Linear validation is requested' });
-  }
-  if (!options.env?.LINEAR_API_KEY || project.tracker.projectSlug.trim().length === 0) {
+  const legacyProject = project as ManagedProject & { tracker?: { projectSlug?: string; projectId?: string } };
+  if (legacyProject.tracker === undefined) {
     return;
   }
-  try {
-    const linearProject = await createLinearService({ apiKey: options.env.LINEAR_API_KEY }).resolveProjectSlug(project.tracker.projectSlug);
-    if (linearProject === undefined || linearProject.id !== project.tracker.projectId) {
-      addIssue({
-        code: 'linear_project_slug_missing',
-        field: 'tracker.projectSlug',
-        message: `Linear project slug "${project.tracker.projectSlug}" did not resolve to configured project id`
-      });
-    }
-  } catch (error) {
-    addIssue({
-      code: 'linear_project_slug_missing',
-      field: 'tracker.projectSlug',
-      message: `Linear project slug could not be resolved: ${error instanceof Error ? error.message : String(error)}`
-    });
+  if ((legacyProject.tracker.projectSlug ?? '').trim().length === 0) {
+    addIssue({ code: 'linear_project_slug_missing', field: 'tracker.projectSlug', message: 'Linear project slug is required when Linear validation is requested' });
   }
 }
 
@@ -630,7 +549,7 @@ function mergeWorkflowFrontMatter(
     tracker: {
       ...readRecord(existing.tracker),
       kind: 'linear',
-      project_slug: project.tracker.projectSlug,
+      project_slug: project.id,
       active_states: runtime?.tracker?.activeStates ?? DEFAULT_ACTIVE_STATES,
       terminal_states: runtime?.tracker?.terminalStates ?? DEFAULT_TERMINAL_STATES
     },
@@ -667,9 +586,35 @@ function renderAfterCreateHook(project: ManagedProject): string {
 
   const cloneSource = hook?.type === 'gitClone' && hook.cloneSource !== undefined
     ? hook.cloneSource
-    : project.repo.cloneSource;
+    : projectGithubUrl(project);
   const target = hook?.type === 'gitClone' && hook.target !== undefined ? hook.target : '.';
   return shellCommand(['git', 'clone', cloneSource, target]);
+}
+
+function projectWorkspaceRoot(project: ManagedProject): string {
+  const legacyProject = project as ManagedProject & { symphony?: { workspaceRoot?: string } };
+  if (legacyProject.symphony?.workspaceRoot !== undefined) {
+    return resolve(legacyProject.symphony.workspaceRoot);
+  }
+  return resolve(process.env.DEFAULT_SYMPHONY_WORKSPACES ?? join(tmpdir(), 'symphony-workspaces'), project.id);
+}
+
+function projectLogsRoot(project: ManagedProject): string {
+  const legacyProject = project as ManagedProject & { symphony?: { logsRoot?: string } };
+  if (legacyProject.symphony?.logsRoot !== undefined) {
+    return resolve(legacyProject.symphony.logsRoot);
+  }
+  return resolve(process.env.DEFAULT_SYMPHONY_LOGS ?? join(tmpdir(), 'symphony-logs'), project.id);
+}
+
+function projectRepoPath(project: ManagedProject): string | undefined {
+  const legacyProject = project as ManagedProject & { repo?: { path?: string } };
+  return legacyProject.repo?.path === undefined ? undefined : resolve(legacyProject.repo.path);
+}
+
+function projectGithubUrl(project: ManagedProject): string {
+  const legacyProject = project as ManagedProject & { repo?: { cloneSource?: string } };
+  return legacyProject.repo?.cloneSource ?? project.githubUrl ?? '';
 }
 
 function shellCommand(args: string[]): string {

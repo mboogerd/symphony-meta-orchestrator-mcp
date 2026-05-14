@@ -3,6 +3,7 @@ import { ListResourcesRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { RuntimeConfig } from '../config/runtime.ts';
 import { packageInfo } from '../package-info.ts';
+import { LinearProjectCache } from '../services/linear/cache.ts';
 import { createLinearService, LinearServiceError, type LinearService } from '../services/linear/index.ts';
 import {
   createProjectRegistryService,
@@ -77,7 +78,7 @@ export function createMcpServer(runtime: McpServerRuntimeConfig): McpServer {
       resources: projects.map((project) => ({
         uri: `symphony://projects/${project.id}`,
         name: project.name,
-        description: `${project.tracker.teamKey} managed project at ${project.repo.path}`,
+        description: `${project.name} managed project for ${project.githubUrl}`,
         mimeType: 'application/yaml'
       }))
     };
@@ -330,7 +331,17 @@ async function requireProject(runtime: RuntimeConfig, projectId: string): Promis
 }
 
 function linear(runtime: McpServerRuntimeConfig) {
-  return runtime.mcpServices?.createLinearService?.(runtime) ?? createLinearService({ apiKey: runtime.env.LINEAR_API_KEY });
+  if (runtime.mcpServices?.createLinearService) {
+    return runtime.mcpServices.createLinearService(runtime);
+  }
+  const service = createLinearService({ apiKey: runtime.env.LINEAR_API_KEY });
+  const teamKey = runtime.env.LINEAR_TEAM_KEY ?? runtime.env.SYMPHONY_LINEAR_TEAM_KEY;
+  return teamKey === undefined
+    ? service
+    : createLinearService({
+        apiKey: runtime.env.LINEAR_API_KEY,
+        projectCache: new LinearProjectCache(service, teamKey)
+      });
 }
 
 function runnerManager(runtime: McpServerRuntimeConfig) {

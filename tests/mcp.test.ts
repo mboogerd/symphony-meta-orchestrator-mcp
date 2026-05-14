@@ -78,8 +78,8 @@ test('MCP describe_project_schema returns register_project guidance and template
 
   const structured = ((response?.result as Record<string, unknown>).structuredContent as Record<string, any>);
   assert.equal(structured.status, 'ok');
-  assert.deepEqual(structured.guidance.requiredTopLevelFields, ['id', 'name', 'tracker', 'repo', 'workflow', 'symphony', 'codex']);
-  assert.equal(structured.example.tracker.kind, 'linear');
+  assert.deepEqual(structured.guidance.requiredTopLevelFields, ['id', 'name', 'githubUrl', 'workflow', 'codex']);
+  assert.equal(structured.example.githubUrl, 'https://github.com/example/meta-orchestrator.git');
   assert.equal(structured.example.workflow.source, 'repo');
 });
 
@@ -99,8 +99,8 @@ test('MCP register_project validation errors include schema guidance', async () 
     const structured = ((response?.result as Record<string, unknown>).structuredContent as Record<string, any>);
     assert.equal(structured.status, 'error');
     assert.equal(structured.error.code, 'invalid_registry');
-    assert.match(structured.error.message, /projects\[0\]\.tracker/);
-    assert.deepEqual(structured.error.details.schema.guidance.requiredTopLevelFields, ['id', 'name', 'tracker', 'repo', 'workflow', 'symphony', 'codex']);
+    assert.match(structured.error.message, /projects\[0\]\.githubUrl/);
+    assert.deepEqual(structured.error.details.schema.guidance.requiredTopLevelFields, ['id', 'name', 'githubUrl', 'workflow', 'codex']);
     assert.equal(structured.error.details.schema.example.codex.threadSandbox, 'workspace-write');
   } finally {
     rmSync(cwd, { recursive: true, force: true });
@@ -180,7 +180,7 @@ test('MCP resources/list exposes managed projects from YAML registry', async () 
         resources: [{
           uri: 'symphony://projects/meta-orchestrator',
           name: 'Meta Orchestrator',
-          description: 'MRB managed project at /tmp/meta-orchestrator',
+          description: 'Meta Orchestrator managed project for git@github.com:mboogerd/symphony-meta-orchestrator-mcp.git',
           mimeType: 'application/yaml'
         }]
       }
@@ -214,7 +214,7 @@ test('MCP validate_project returns structured invalid setup output', async () =>
     const text = ((result.content as Array<Record<string, string>>)[0]).text;
     const output = JSON.parse(text);
     assert.equal(output.status, 'invalid');
-    assert.equal(output.setup[0].issues[0].code, 'repo_path_missing');
+    assert.equal(output.setup[0].issues[0].code, 'workflow_path_missing');
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

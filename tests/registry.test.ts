@@ -13,35 +13,10 @@ import {
 const baseProject: ManagedProject = {
   id: 'meta-orchestrator',
   name: 'Meta Orchestrator',
-  tracker: {
-    kind: 'linear',
-    teamKey: 'MRB',
-    teamId: 'linear-team-id',
-    projectId: 'linear-project-id',
-    projectSlug: 'meta-orchestrator'
-  },
-  repo: {
-    path: '/tmp/symphony-meta-orchestrator-mcp',
-    remoteUrl: 'https://github.com/mboogerd/symphony-meta-orchestrator-mcp.git',
-    defaultBranch: 'main',
-    cloneSource: 'git@github.com:mboogerd/symphony-meta-orchestrator-mcp.git'
-  },
+  githubUrl: 'git@github.com:mboogerd/symphony-meta-orchestrator-mcp.git',
   workflow: {
     source: 'repo',
     path: 'WORKFLOW.md'
-  },
-  symphony: {
-    command: 'mise',
-    args: [
-      'exec',
-      '--',
-      './bin/symphony',
-      '--i-understand-that-this-will-be-running-without-the-usual-guardrails'
-    ],
-    cwd: '/tmp/symphony',
-    runnerPort: 4101,
-    workspaceRoot: '/tmp/symphony-workspaces/meta-orchestrator',
-    logsRoot: '/tmp/symphony-logs/meta-orchestrator'
   },
   codex: {
     threadSandbox: 'workspace-write',
@@ -60,16 +35,18 @@ test('registry creates, persists, loads, lists, and updates YAML managed project
   try {
     await registry.create(baseProject);
 
-    assert.match(readFileSync(configPath, 'utf8'), /tracker:\n\s+kind: linear/);
+    const written = readFileSync(configPath, 'utf8');
+    assert.match(written, /version: 3/);
+    assert.match(written, /githubUrl:/);
+    assert.doesNotMatch(written, /tracker:|repo:|symphony:/);
     assert.deepEqual(await registry.list(), [baseProject]);
 
     const updated = await registry.update(baseProject.id, {
-      symphony: { runnerPort: 4200 }
+      githubUrl: 'https://github.com/example/updated.git'
     });
 
-    assert.equal(updated.symphony.runnerPort, 4200);
-    assert.equal(updated.symphony.workspaceRoot, baseProject.symphony.workspaceRoot);
-    assert.equal((await registry.load()).projects[0]?.symphony.runnerPort, 4200);
+    assert.equal(updated.githubUrl, 'https://github.com/example/updated.git');
+    assert.equal((await registry.load()).projects[0]?.githubUrl, 'https://github.com/example/updated.git');
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -84,17 +61,12 @@ test('registry rejects invalid entries with clear validation errors', async () =
       registry.create({
         ...baseProject,
         id: '',
-        tracker: { ...baseProject.tracker, projectSlug: '' },
-        repo: { ...baseProject.repo, cloneSource: '' },
-        symphony: { ...baseProject.symphony, command: '', runnerPort: 70000 }
+        githubUrl: ''
       }),
       (error) => {
         assert.equal(error instanceof ProjectRegistryValidationError, true);
         assert.match((error as Error).message, /projects\[0\]\.id: expected a non-empty string/);
-        assert.match((error as Error).message, /projects\[0\]\.tracker\.projectSlug/);
-        assert.match((error as Error).message, /projects\[0\]\.repo\.cloneSource/);
-        assert.match((error as Error).message, /projects\[0\]\.symphony\.command/);
-        assert.match((error as Error).message, /projects\[0\]\.symphony\.runnerPort/);
+        assert.match((error as Error).message, /projects\[0\]\.githubUrl/);
         return true;
       }
     );
@@ -110,29 +82,14 @@ test('registry normalizes legacy string turn sandbox policies', async () => {
 
   try {
     writeFileSync(configPath, [
-      'version: 2',
+      'version: 3',
       'projects:',
       '  - id: meta-orchestrator',
       '    name: Meta Orchestrator',
-      '    tracker:',
-      '      kind: linear',
-      '      teamKey: MRB',
-      '      teamId: linear-team-id',
-      '      projectId: linear-project-id',
-      '      projectSlug: meta-orchestrator',
-      '    repo:',
-      '      path: /tmp/symphony-meta-orchestrator-mcp',
-      '      remoteUrl: https://github.com/mboogerd/symphony-meta-orchestrator-mcp.git',
-      '      defaultBranch: main',
-      '      cloneSource: git@github.com:mboogerd/symphony-meta-orchestrator-mcp.git',
+      '    githubUrl: git@github.com:mboogerd/symphony-meta-orchestrator-mcp.git',
       '    workflow:',
       '      source: repo',
       '      path: WORKFLOW.md',
-      '    symphony:',
-      '      command: mise',
-      '      runnerPort: 4101',
-      '      workspaceRoot: /tmp/symphony-workspaces/meta-orchestrator',
-      '      logsRoot: /tmp/symphony-logs/meta-orchestrator',
       '    codex:',
       '      threadSandbox: workspace-write',
       '      turnSandbox: workspace-write',
@@ -217,7 +174,7 @@ test('registry rejects invalid workflow runtime settings', async () => {
   }
 });
 
-test('registry rejects duplicate identities, ports, and paths deterministically', async () => {
+test('registry rejects duplicate id and githubUrl deterministically', async () => {
   const cwd = await mkdtemp(join(tmpdir(), 'mrb8-registry-'));
   const registry = createProjectRegistryService(join(cwd, 'registry.yaml'));
 
@@ -227,23 +184,28 @@ test('registry rejects duplicate identities, ports, and paths deterministically'
     await assert.rejects(
       registry.create({
         ...baseProject,
-        id: 'duplicate',
-        repo: { ...baseProject.repo, path: baseProject.repo.path },
-        symphony: {
-          ...baseProject.symphony,
-          workspaceRoot: baseProject.symphony.workspaceRoot,
-          runnerPort: baseProject.symphony.runnerPort
-        }
+        id: baseProject.id
       }),
       (error) => {
         assert.equal(error instanceof ProjectRegistryValidationError, true);
-        assert.match((error as Error).message, /duplicate Linear identity also used by projects\[0\]/);
-        assert.match((error as Error).message, /duplicate repo path also used by projects\[0\]/);
-        assert.match((error as Error).message, /duplicate workspace root also used by projects\[0\]/);
-        assert.match((error as Error).message, /duplicate port also used by projects\[0\]\.symphony\.runnerPort/);
+        assert.match((error as Error).message, /duplicate project id also used by projects\[0\]/);
+        assert.match((error as Error).message, /duplicate githubUrl also used by projects\[0\]/);
         return true;
       }
     );
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('registry rejects version 2 with migration error', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'mrb119-registry-v2-'));
+  const configPath = join(cwd, 'registry.yaml');
+  const registry = createProjectRegistryService(configPath);
+
+  try {
+    writeFileSync(configPath, ['version: 2', 'projects: []', ''].join('\n'));
+    await assert.rejects(registry.load(), /version 2.*migrat/i);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

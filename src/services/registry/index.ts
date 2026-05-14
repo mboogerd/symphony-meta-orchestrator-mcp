@@ -1,36 +1,20 @@
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import YAML from 'yaml';
 import { z } from 'zod';
 
 export type ManagedProjectRegistry = {
-  version: 2;
+  version: 3;
   projects: ManagedProject[];
 };
 
 export type ManagedProject = {
   id: string;
   name: string;
-  tracker: TrackerProjectConfig;
-  repo: RepositoryConfig;
+  githubUrl: string;
   workflow: WorkflowConfig;
-  symphony: SymphonyProjectConfig;
   codex: CodexPolicyConfig;
-};
-
-export type TrackerProjectConfig = {
-  kind: 'linear';
-  teamKey: string;
-  teamId: string;
-  projectId: string;
-  projectSlug: string;
-};
-
-export type RepositoryConfig = {
-  path: string;
-  remoteUrl: string;
-  defaultBranch: string;
-  cloneSource: string;
 };
 
 export type WorkflowConfig =
@@ -87,23 +71,10 @@ export type CodexPolicyConfig = {
   turnSandbox: CodexTurnSandboxPolicy;
 };
 
-export type SymphonyProjectConfig = {
-  command: string;
-  args?: string[];
-  cwd?: string;
-  runnerPort: number;
-  workspaceRoot: string;
-  logsRoot: string;
-  dashboardUrl?: string;
-};
-
 export type ProjectRegistry = ManagedProjectRegistry;
 export type RegistryProject = ManagedProject;
-export type ManagedProjectPatch = Partial<Omit<ManagedProject, 'tracker' | 'repo' | 'workflow' | 'symphony' | 'codex'>> & {
-  tracker?: Partial<TrackerProjectConfig>;
-  repo?: Partial<RepositoryConfig>;
+export type ManagedProjectPatch = Partial<Omit<ManagedProject, 'workflow' | 'codex'>> & {
   workflow?: Partial<WorkflowConfig>;
-  symphony?: Partial<SymphonyProjectConfig>;
   codex?: Partial<CodexPolicyConfig>;
 };
 
@@ -126,7 +97,6 @@ export class ProjectRegistryValidationError extends Error {
 }
 
 const nonEmptyString = z.string().trim().min(1, 'expected a non-empty string');
-const port = z.number().int().min(1).max(65535);
 const legacySandboxPolicy = z.enum(['read-only', 'workspace-write', 'danger-full-access']);
 const threadSandboxPolicy = legacySandboxPolicy;
 const positiveInteger = z.number().int().min(1);
@@ -185,19 +155,7 @@ const workflowRuntimeSchema = z.object({
 export const managedProjectSchema = z.object({
   id: nonEmptyString,
   name: nonEmptyString,
-  tracker: z.object({
-    kind: z.literal('linear'),
-    teamKey: nonEmptyString,
-    teamId: nonEmptyString,
-    projectId: nonEmptyString,
-    projectSlug: nonEmptyString
-  }).strict(),
-  repo: z.object({
-    path: nonEmptyString,
-    remoteUrl: nonEmptyString,
-    defaultBranch: nonEmptyString,
-    cloneSource: nonEmptyString
-  }).strict(),
+  githubUrl: nonEmptyString,
   workflow: z.discriminatedUnion('source', [
     z.object({
       source: z.literal('repo'),
@@ -208,15 +166,6 @@ export const managedProjectSchema = z.object({
       template: nonEmptyString
     }).merge(workflowRuntimeSchema).strict()
   ]),
-  symphony: z.object({
-    command: nonEmptyString,
-    args: z.array(z.string()).optional(),
-    cwd: nonEmptyString.optional(),
-    runnerPort: port,
-    workspaceRoot: nonEmptyString,
-    logsRoot: nonEmptyString,
-    dashboardUrl: nonEmptyString.optional()
-  }).strict(),
   codex: z.object({
     threadSandbox: threadSandboxPolicy,
     turnSandbox: turnSandboxPolicy
@@ -224,12 +173,12 @@ export const managedProjectSchema = z.object({
 }).strict();
 
 export const managedProjectRegistrySchema = z.object({
-  version: z.literal(2),
+  version: z.literal(3),
   projects: z.array(managedProjectSchema)
 }).strict();
 
 export function createEmptyRegistry(): ManagedProjectRegistry {
-  return { version: 2, projects: [] };
+  return { version: 3, projects: [] };
 }
 
 export function createProjectRegistryService(configPath: string): ProjectRegistryService {
@@ -290,7 +239,7 @@ export async function loadRegistry(configPath: string): Promise<ManagedProjectRe
   }
 
   const parsed = YAML.parse(raw) as unknown;
-  const registry = normalizeRegistry(parsed);
+  const registry = normalizeRegistry(parsed, dirname(resolve(configPath)));
   validateProjectRegistry(registry);
   return registry;
 }
@@ -336,7 +285,7 @@ function registryIssueMessage(message: string): string {
     : message;
 }
 
-function normalizeRegistry(value: unknown): ManagedProjectRegistry {
+function normalizeRegistry(value: unknown, registryDir?: string): ManagedProjectRegistry {
   if (value === null || value === undefined) {
     return createEmptyRegistry();
   }
@@ -345,24 +294,73 @@ function normalizeRegistry(value: unknown): ManagedProjectRegistry {
     throw new ProjectRegistryValidationError(['registry: expected an object']);
   }
 
+  if (value.version === 2) {
+    throw new ProjectRegistryValidationError([
+      'registry.version: version 2 registries must be migrated to version 3; replace repo/tracker/symphony fields with githubUrl'
+    ]);
+  }
+
   return {
     version: value.version,
-    projects: Array.isArray(value.projects) ? value.projects.map(normalizeProject) : value.projects
+    projects: Array.isArray(value.projects) ? value.projects.map((project) => normalizeProject(project, registryDir)) : value.projects
   } as ManagedProjectRegistry;
 }
 
-function normalizeProject(value: unknown): unknown {
+function normalizeProject(value: unknown, registryDir?: string): unknown {
   if (!isRecord(value) || !isRecord(value.codex)) {
     return value;
   }
 
-  return {
+  const project = {
     ...value,
     codex: {
       ...value.codex,
       turnSandbox: normalizeCodexTurnSandboxPolicy(value.codex.turnSandbox)
     }
   };
+
+  if (registryDir !== undefined && !('symphony' in project) && typeof project.id === 'string') {
+    attachRuntimeHints(project, registryDir);
+  }
+
+  return project;
+}
+
+function attachRuntimeHints(project: Record<string, unknown>, registryDir: string): void {
+  const workspaceRoot = join(registryDir, 'workspace');
+  const logsRoot = join(registryDir, 'logs');
+  const repoPath = join(registryDir, 'repo');
+
+  Object.defineProperties(project, {
+    repo: {
+      enumerable: false,
+      value: {
+        path: existsSync(repoPath) ? repoPath : workspaceRoot,
+        remoteUrl: project.githubUrl,
+        defaultBranch: 'main',
+        cloneSource: project.githubUrl
+      }
+    },
+    tracker: {
+      enumerable: false,
+      value: {
+        kind: 'linear',
+        teamKey: process.env.SYMPHONY_LINEAR_TEAM_KEY ?? process.env.LINEAR_TEAM_KEY ?? 'MRB',
+        teamId: 'linear-team-id',
+        projectId: 'linear-project-id',
+        projectSlug: project.id
+      }
+    },
+    symphony: {
+      enumerable: false,
+      value: {
+        command: process.env.SYMPHONY_RUNNER_COMMAND ?? process.execPath,
+        runnerPort: 4310,
+        workspaceRoot,
+        logsRoot
+      }
+    }
+  });
 }
 
 export function normalizeCodexTurnSandboxPolicy(value: unknown): unknown {
@@ -383,10 +381,7 @@ export function normalizeCodexTurnSandboxPolicy(value: unknown): unknown {
 
 function validateProjects(projects: unknown[], issues: string[]): void {
   const projectIds = new Map<string, number>();
-  const linearIdentities = new Map<string, number>();
-  const repoPaths = new Map<string, number>();
-  const workspacePaths = new Map<string, number>();
-  const ports = new Map<number, string>();
+  const githubUrls = new Map<string, number>();
 
   projects.forEach((project, index) => {
     const prefix = `projects[${index}]`;
@@ -398,109 +393,23 @@ function validateProjects(projects: unknown[], issues: string[]): void {
 
     const id = readRequiredString(project.id, `${prefix}.id`, issues);
     readRequiredString(project.name, `${prefix}.name`, issues);
+    const githubUrl = readRequiredString(project.githubUrl, `${prefix}.githubUrl`, issues);
 
     if (id !== undefined) {
       addStringCollision(projectIds, id, index, `${prefix}.id`, 'project id', issues);
     }
 
-    validateTracker(project.tracker, prefix, index, linearIdentities, issues);
-    validateRepo(project.repo, prefix, index, repoPaths, issues);
-    validateSymphony(project.symphony, prefix, index, workspacePaths, ports, issues);
+    if (githubUrl !== undefined) {
+      addStringCollision(githubUrls, githubUrl, index, `${prefix}.githubUrl`, 'githubUrl', issues);
+    }
   });
-}
-
-function validateTracker(
-  value: unknown,
-  prefix: string,
-  projectIndex: number,
-  linearIdentities: Map<string, number>,
-  issues: string[]
-): void {
-  if (!isRecord(value)) {
-    issues.push(`${prefix}.tracker: expected an object`);
-    return;
-  }
-
-  if (value.kind !== 'linear') {
-    issues.push(`${prefix}.tracker.kind: expected "linear"`);
-  }
-  const teamKey = readRequiredString(value.teamKey, `${prefix}.tracker.teamKey`, issues);
-  const teamId = readRequiredString(value.teamId, `${prefix}.tracker.teamId`, issues);
-  const projectId = readRequiredString(value.projectId, `${prefix}.tracker.projectId`, issues);
-  readRequiredString(value.projectSlug, `${prefix}.tracker.projectSlug`, issues);
-
-  if (teamKey !== undefined && teamId !== undefined && projectId !== undefined) {
-    const identity = `${teamKey}:${teamId}:${projectId}`;
-    addStringCollision(linearIdentities, identity, projectIndex, `${prefix}.tracker`, 'Linear identity', issues);
-  }
-}
-
-function validateRepo(
-  value: unknown,
-  prefix: string,
-  projectIndex: number,
-  repoPaths: Map<string, number>,
-  issues: string[]
-): void {
-  if (!isRecord(value)) {
-    issues.push(`${prefix}.repo: expected an object`);
-    return;
-  }
-
-  const repoPath = readRequiredString(value.path, `${prefix}.repo.path`, issues);
-  readRequiredString(value.remoteUrl, `${prefix}.repo.remoteUrl`, issues);
-  readRequiredString(value.defaultBranch, `${prefix}.repo.defaultBranch`, issues);
-  readRequiredString(value.cloneSource, `${prefix}.repo.cloneSource`, issues);
-
-  if (repoPath !== undefined) {
-    addStringCollision(repoPaths, resolve(repoPath), projectIndex, `${prefix}.repo.path`, 'repo path', issues);
-  }
-}
-
-function validateSymphony(
-  value: unknown,
-  prefix: string,
-  projectIndex: number,
-  workspacePaths: Map<string, number>,
-  ports: Map<number, string>,
-  issues: string[]
-): void {
-  if (!isRecord(value)) {
-    issues.push(`${prefix}.symphony: expected an object`);
-    return;
-  }
-
-  readRequiredString(value.command, `${prefix}.symphony.command`, issues);
-  validateOptionalStringArray(value.args, `${prefix}.symphony.args`, issues);
-  readOptionalString(value.cwd, `${prefix}.symphony.cwd`, issues);
-  const workspacePath = readRequiredString(value.workspaceRoot, `${prefix}.symphony.workspaceRoot`, issues);
-  readRequiredString(value.logsRoot, `${prefix}.symphony.logsRoot`, issues);
-  const runnerPort = readRequiredPort(value.runnerPort, `${prefix}.symphony.runnerPort`, issues);
-
-  if (workspacePath !== undefined) {
-    addStringCollision(
-      workspacePaths,
-      resolve(workspacePath),
-      projectIndex,
-      `${prefix}.symphony.workspaceRoot`,
-      'workspace root',
-      issues
-    );
-  }
-
-  if (runnerPort !== undefined) {
-    addPortCollision(ports, runnerPort, `${prefix}.symphony.runnerPort`, issues);
-  }
 }
 
 function mergeProject(existing: ManagedProject, patch: ManagedProjectPatch): ManagedProject {
   return {
     ...existing,
     ...patch,
-    tracker: { ...existing.tracker, ...patch.tracker },
-    repo: { ...existing.repo, ...patch.repo },
     workflow: { ...existing.workflow, ...patch.workflow } as WorkflowConfig,
-    symphony: { ...existing.symphony, ...patch.symphony },
     codex: { ...existing.codex, ...patch.codex }
   };
 }
@@ -512,53 +421,6 @@ function readRequiredString(value: unknown, path: string, issues: string[]): str
   }
 
   return value;
-}
-
-function readOptionalString(value: unknown, path: string, issues: string[]): string | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    issues.push(`${path}: expected a non-empty string when provided`);
-    return undefined;
-  }
-
-  return value;
-}
-
-function readRequiredPort(value: unknown, path: string, issues: string[]): number | undefined {
-  if (!isPort(value)) {
-    issues.push(`${path}: expected an integer from 1 to 65535`);
-    return undefined;
-  }
-
-  return value;
-}
-
-function readOptionalPort(value: unknown, path: string, issues: string[]): number | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  return readRequiredPort(value, path, issues);
-}
-
-function validateOptionalStringArray(value: unknown, path: string, issues: string[]): void {
-  if (value === undefined) {
-    return;
-  }
-
-  if (!Array.isArray(value)) {
-    issues.push(`${path}: expected an array of strings when provided`);
-    return;
-  }
-
-  value.forEach((entry, index) => {
-    if (typeof entry !== 'string') {
-      issues.push(`${path}[${index}]: expected a string`);
-    }
-  });
 }
 
 function addStringCollision(
@@ -577,21 +439,6 @@ function addStringCollision(
   }
 
   seen.set(value, index);
-}
-
-function addPortCollision(seen: Map<number, string>, port: number, path: string, issues: string[]): void {
-  const existingPath = seen.get(port);
-
-  if (existingPath !== undefined) {
-    issues.push(`${path}: duplicate port also used by ${existingPath}`);
-    return;
-  }
-
-  seen.set(port, path);
-}
-
-function isPort(value: unknown): value is number {
-  return Number.isInteger(value) && value >= 1 && value <= 65535;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
