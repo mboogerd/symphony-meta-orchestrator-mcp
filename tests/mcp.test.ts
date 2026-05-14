@@ -326,6 +326,15 @@ function fakeLinearProjectClient(): LinearSdkClient {
     async issue(id) {
       return { id, identifier: 'MRB-1', url: 'https://linear.example/MRB-1' };
     },
+    async project(id) {
+      return {
+        id,
+        name: 'Meta Orchestrator',
+        slugId: 'meta-123',
+        url: 'https://linear.example/project/meta-123',
+        team: { id: 'team-1', key: 'MRB' }
+      };
+    },
     async createProject() {
       return { project: { id: 'project-1', name: 'Meta Orchestrator', slugId: 'meta-123', url: 'https://linear.example/project/meta-123' } };
     },

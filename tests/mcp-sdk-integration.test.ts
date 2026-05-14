@@ -246,7 +246,7 @@ test('SDK MCP setup_project can attach an existing Linear project', async () => 
       assert.equal(payload.status, 'ok');
       assert.equal(payload.setup.project.tracker.projectId, 'existing-project-id');
       assert.equal(payload.setup.project.tracker.projectSlug, 'existing-project-97e46de28c13');
-      assert.deepEqual(calls.map((call) => call.method), ['teams', 'teams', 'team.projects']);
+      assert.deepEqual(calls.map((call) => call.method), ['teams', 'project']);
     } finally {
       await sdk.close();
     }
@@ -518,6 +518,19 @@ function mockLinearClient(calls: Array<{ method: string; input: Record<string, u
         team: { id: 'linear-team-id', key: 'MRB' },
         project: { id: 'linear-project-id', name: 'Meta Orchestrator' }
       };
+    },
+    async project(id) {
+      calls.push({ method: 'project', input: { id } });
+      if (id === 'existing-project-id') {
+        return {
+          id: 'existing-project-id',
+          name: 'Existing SDK Project',
+          slugId: '97e46de28c13',
+          url: 'https://linear.example/project/existing-project-97e46de28c13',
+          team: { id: 'linear-team-id', key: 'MRB' }
+        };
+      }
+      return undefined;
     },
     async createProject(input) {
       calls.push({ method: 'createProject', input });

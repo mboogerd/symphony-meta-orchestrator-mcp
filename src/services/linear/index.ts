@@ -128,6 +128,7 @@ type MaybeLazy<T> = MaybePromise<T> | (() => MaybePromise<T>);
 
 export type LinearSdkClient = {
   issue(id: string): Promise<LinearIssueLike | undefined>;
+  project(id: string): Promise<LinearProjectLike | undefined>;
   createProject(input: Record<string, unknown>): Promise<LinearPayload<'project', LinearProjectLike>>;
   createIssue(input: Record<string, unknown>): Promise<LinearPayload<'issue', LinearIssueLike>>;
   createIssueBatch(input: Record<string, unknown>): Promise<LinearPayload<'issues', LinearIssueLike[]>>;
@@ -311,20 +312,23 @@ export class LinearService {
 
   async resolveProjectForTeam(projectId: string, teamId: string): Promise<LinearProjectReference> {
     return this.wrap('resolve_project', async () => {
-      const teams = await this.client.teams({ filter: { id: { eq: teamId } }, first: 1 });
-      const team = teams.nodes[0];
-      const projects = team?.projects === undefined
-        ? { nodes: [] }
-        : typeof team.projects === 'function'
-          ? await team.projects({ filter: { id: { eq: projectId } }, first: 1 })
-          : await team.projects;
-      const project = projects.nodes[0];
+      const project = await this.client.project(projectId);
       if (!project) {
         throw new LinearServiceError(
           'project_not_found',
           'resolve_project',
           `Linear project "${projectId}" was not found in the resolved team`,
           { projectId, teamId }
+        );
+      }
+
+      const projectTeamId = await this.projectTeamId(project, 'resolve_project');
+      if (projectTeamId !== teamId) {
+        throw new LinearServiceError(
+          'project_not_found',
+          'resolve_project',
+          `Linear project "${projectId}" was not found in the resolved team`,
+          { projectId, teamId, actualTeamId: projectTeamId }
         );
       }
 

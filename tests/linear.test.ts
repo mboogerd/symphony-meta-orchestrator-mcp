@@ -16,6 +16,15 @@ function fakeClient(overrides: Partial<LinearSdkClient> = {}): LinearSdkClient {
         project: { id: 'linear-project-id', name: 'Meta' }
       };
     },
+    async project(id) {
+      return {
+        id,
+        name: 'Meta',
+        slugId: 'meta-123',
+        url: 'https://linear.app/acme/project/meta-123',
+        team: { id: 'team-1', key: 'MRB' }
+      };
+    },
     async createProject(input) {
       return { project: { id: 'project-1', name: String(input.name), slugId: 'meta-123', url: 'https://linear.app/acme/project/meta-123' } };
     },
@@ -140,6 +149,48 @@ test('Linear service resolves a human-readable project URL slug by slugId suffix
 
   assert.equal(project?.slugId, '97e46de28c13');
   assert.deepEqual(projectQueries[0], { filter: { slugId: { eq: '97e46de28c13' } }, first: 1 });
+});
+
+test('Linear service resolves project IDs directly without team name disambiguation', async () => {
+  const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+  const service = createLinearService({
+    client: fakeClient({
+      async project(id) {
+        calls.push({ method: 'project', input: { id } });
+        return {
+          id,
+          name: 'Duplicate Name',
+          slugId: 'duplicate-name-target',
+          url: 'https://linear.app/acme/project/duplicate-name-target',
+          team: { id: 'team-1', key: 'MRB' }
+        };
+      },
+      async teams(variables) {
+        calls.push({ method: 'teams', input: variables ?? {} });
+        return {
+          nodes: [{
+            id: 'team-1',
+            key: 'MRB',
+            async projects(projectVariables) {
+              calls.push({ method: 'team.projects', input: projectVariables ?? {} });
+              return {
+                nodes: [
+                  { id: 'other-project', name: 'Duplicate Name', slugId: 'duplicate-name-other', url: 'https://linear.app/acme/project/duplicate-name-other' },
+                  { id: 'target-project', name: 'Duplicate Name', slugId: 'duplicate-name-target', url: 'https://linear.app/acme/project/duplicate-name-target' }
+                ]
+              };
+            }
+          }]
+        };
+      }
+    })
+  });
+
+  const project = await service.resolveProjectForTeam('target-project', 'team-1');
+
+  assert.equal(project.id, 'target-project');
+  assert.equal(project.slugId, 'duplicate-name-target');
+  assert.deepEqual(calls, [{ method: 'project', input: { id: 'target-project' } }]);
 });
 
 test('Linear service finds projects by case-insensitive name substring and slug', async () => {
