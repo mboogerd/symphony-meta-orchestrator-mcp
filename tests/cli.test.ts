@@ -43,7 +43,7 @@ test('CLI projects:list reads managed projects from YAML registry', () => {
     const result = spawnSync(process.execPath, ['src/cli/index.ts', 'projects:list', '--config', configPath], {
       cwd: process.cwd(),
       encoding: 'utf8',
-      env: { ...process.env, SYMPHONY_LOG_LEVEL: 'silent' }
+      env: { ...process.env, GITHUB_TOKEN: '', SYMPHONY_LOG_LEVEL: 'silent' }
     });
 
     assert.equal(result.status, 0, result.stderr);
@@ -67,7 +67,7 @@ test('CLI projects list reads managed projects from YAML registry', () => {
     const result = spawnSync(process.execPath, ['src/cli/index.ts', 'projects', 'list', '--config', configPath], {
       cwd: process.cwd(),
       encoding: 'utf8',
-      env: { ...process.env, SYMPHONY_LOG_LEVEL: 'silent' }
+      env: { ...process.env, GITHUB_TOKEN: '', SYMPHONY_LOG_LEVEL: 'silent' }
     });
 
     assert.equal(result.status, 0, result.stderr);
@@ -78,7 +78,7 @@ test('CLI projects list reads managed projects from YAML registry', () => {
   }
 });
 
-test('CLI projects:validate fails with structured setup output for missing repo path', () => {
+test('CLI projects:validate succeeds without local repo path when fallback is available', () => {
   const cwd = mkdtempSync(join(tmpdir(), 'mrb9-cli-invalid-'));
   const configPath = join(cwd, 'registry.yaml');
 
@@ -94,16 +94,15 @@ test('CLI projects:validate fails with structured setup output for missing repo 
       env: { ...process.env, SYMPHONY_LOG_LEVEL: 'silent' }
     });
 
-    assert.equal(result.status, 1);
+    assert.equal(result.status, 0);
     const output = JSON.parse(result.stdout);
-    assert.equal(output.status, 'invalid');
-    assert.equal(output.setup[0].issues[0].code, 'workflow_path_missing');
+    assert.equal(output.status, 'ok');
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
 });
 
-test('CLI project validate fails with structured setup output for missing repo path', () => {
+test('CLI project validate succeeds without local repo path when fallback is available', () => {
   const cwd = mkdtempSync(join(tmpdir(), 'mrb13-cli-project-invalid-'));
   const configPath = join(cwd, 'registry.yaml');
 
@@ -119,10 +118,9 @@ test('CLI project validate fails with structured setup output for missing repo p
       env: { ...process.env, SYMPHONY_LOG_LEVEL: 'silent' }
     });
 
-    assert.equal(result.status, 1);
+    assert.equal(result.status, 0);
     const output = JSON.parse(result.stdout);
-    assert.equal(output.status, 'invalid');
-    assert.equal(output.setup[0].issues[0].code, 'workflow_path_missing');
+    assert.equal(output.status, 'ok');
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

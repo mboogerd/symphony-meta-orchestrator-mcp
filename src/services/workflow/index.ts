@@ -1,10 +1,12 @@
 import { createServer } from 'node:net';
-import { access, constants, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { access, constants, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import YAML from 'yaml';
+import type { Environment } from '../../config/env.ts';
+import type { Logger } from '../../logging/logger.ts';
 import { validateProjectRegistry, type ManagedProject, type ManagedProjectRegistry } from '../registry/index.ts';
 
 const execFileAsync = promisify(execFile);
@@ -23,6 +25,8 @@ export type WorkflowSetupIssueCode =
   | 'repo_remote_missing'
   | 'repo_default_branch_missing'
   | 'workflow_path_missing'
+  | 'workflow_fetch_auth_required'
+  | 'workflow_fetch_failed'
   | 'workspace_root_unavailable'
   | 'logs_root_unavailable'
   | 'workflow_render_failed'
@@ -92,17 +96,22 @@ export type WorkflowSetupValidationOptions = {
   phase?: WorkflowSetupValidationPhase;
   registry?: ManagedProjectRegistry;
   validateLinear?: boolean;
-  env?: Record<string, string | undefined>;
+  env?: Environment;
+  fetch?: FetchFunction;
+  sparseCloneWorkflowFile?: SparseCloneWorkflowFile;
+  logger?: Pick<Logger, 'info'>;
   portAvailable?: PortAvailabilityProbe;
 };
 
 export type PortAvailabilityProbe = (port: number) => Promise<boolean>;
+export type FetchFunction = typeof fetch;
+export type SparseCloneWorkflowFile = (githubUrl: string, workflowPath: string, defaultBranch: string) => Promise<string>;
 
-export async function renderProjectWorkflow(project: ManagedProject): Promise<WorkflowRenderResult> {
+export async function renderProjectWorkflow(project: ManagedProject, options: WorkflowSetupValidationOptions = {}): Promise<WorkflowRenderResult> {
   const workspaceRoot = projectWorkspaceRoot(project);
   const logsRoot = projectLogsRoot(project);
   const workflowPath = join(workspaceRoot, 'WORKFLOW.md');
-  const template = await loadWorkflowTemplate(project, projectRepoPath(project) ?? workspaceRoot);
+  const template = await loadWorkflowTemplate(project, options);
   const frontMatter = mergeWorkflowFrontMatter(template.frontMatter, project, workspaceRoot);
   const content = renderWorkflowDocument(frontMatter, template.body);
 
@@ -123,21 +132,26 @@ export async function validateProjectWorkflowSetup(project: ManagedProject, opti
   validateRegistry(options.registry, recordIssue('registry', 'schema'));
 
   if (includesPhase(phase, 'render')) {
-    if (project.workflow.source === 'repo') {
-      await validateRepoWorkflowPath(projectRepoPath(project) ?? workspaceRoot, project.workflow.path, recordIssue('workflow', 'render'));
-    }
-
     if (subsystemIssues.repo.errors.length === 0 && subsystemIssues.workflow.errors.length === 0) {
       try {
-        workflow = await renderProjectWorkflow(project);
+        workflow = await renderProjectWorkflow(project, options);
         validateRenderedWorkflow(workflow.content, recordIssue('workflow', 'render'));
         validateCodexPolicy(project, workflow.content, recordIssue('codexPolicy', 'render'));
       } catch (error) {
-        recordIssue('workflow', 'render')({
-          code: 'workflow_render_failed',
-          field: 'workflow',
-          message: `Workflow could not be rendered: ${error instanceof Error ? error.message : String(error)}`
-        });
+        if (error instanceof WorkflowFetchError) {
+          recordIssue('workflow', 'render')({
+            code: error.code,
+            field: error.field,
+            message: error.message,
+            path: error.path
+          });
+        } else {
+          recordIssue('workflow', 'render')({
+            code: 'workflow_render_failed',
+            field: 'workflow',
+            message: `Workflow could not be rendered: ${error instanceof Error ? error.message : String(error)}`
+          });
+        }
       }
     }
   }
@@ -177,14 +191,14 @@ export async function validateProjectWorkflowSetups(projects: ManagedProject[], 
   return Promise.all(projects.map((project) => validateProjectWorkflowSetup(project, options)));
 }
 
-export async function writeProjectWorkflow(project: ManagedProject): Promise<WorkflowRenderResult> {
-  const validation = await validateProjectWorkflowSetup(project, { phase: 'schema' });
+export async function writeProjectWorkflow(project: ManagedProject, options: WorkflowSetupValidationOptions = {}): Promise<WorkflowRenderResult> {
+  const validation = await validateProjectWorkflowSetup(project, { ...options, phase: 'schema' });
 
   if (!validation.ok) {
     throw new WorkflowSetupValidationError([validation]);
   }
 
-  const workflow = await renderProjectWorkflow(project);
+  const workflow = await renderProjectWorkflow(project, options);
 
   await mkdir(workflow.workspaceRoot, { recursive: true });
   await mkdir(workflow.logsRoot, { recursive: true });
@@ -269,18 +283,6 @@ function validateRegistry(registry: ManagedProjectRegistry | undefined, addIssue
     for (const message of messages) {
       addIssue({ code: 'registry_schema_invalid', field: 'registry', message: String(message) });
     }
-  }
-}
-
-async function validateRepoWorkflowPath(repoPath: string, workflowPath: string, addIssue: AddWorkflowSetupIssue): Promise<void> {
-  const path = resolve(repoPath, workflowPath);
-  try {
-    const fileStat = await stat(path);
-    if (!fileStat.isFile()) {
-      addIssue({ code: 'workflow_path_missing', field: 'workflow.path', message: 'Repo-owned workflow path is not a file', path });
-    }
-  } catch {
-    addIssue({ code: 'workflow_path_missing', field: 'workflow.path', message: 'Repo-owned workflow path does not exist', path });
   }
 }
 
@@ -475,23 +477,59 @@ const DEFAULT_AGENT_MAX_CONCURRENT = 10;
 const DEFAULT_AGENT_MAX_TURNS = 20;
 const DEFAULT_CODEX_COMMAND = 'codex --config shell_environment_policy.inherit=all app-server';
 const DEFAULT_CODEX_APPROVAL_POLICY = 'never';
+const DEFAULT_WORKFLOW_PATH = 'WORKFLOW.md';
+const DEFAULT_SYMPHONY_INSTALL_PATH = join(homedir(), '.local', 'share', 'symphony-meta-orchestrator', 'symphony');
 
-async function loadWorkflowTemplate(project: ManagedProject, repoPath: string): Promise<WorkflowTemplate> {
+async function loadWorkflowTemplate(project: ManagedProject, options: WorkflowSetupValidationOptions): Promise<WorkflowTemplate> {
   if (project.workflow.source === 'generated') {
     return defaultWorkflowTemplate(project);
   }
 
-  const templatePath = resolve(repoPath, project.workflow.path);
-  let raw: string;
-  try {
-    raw = await readFile(templatePath, 'utf8');
-  } catch (error) {
-    if (isFileNotFoundError(error)) {
-      return defaultWorkflowTemplate(project);
+  const workflowPath = project.workflow.path ?? DEFAULT_WORKFLOW_PATH;
+  const localTemplate = await readLocalRepoWorkflowTemplate(project, workflowPath);
+  if (localTemplate !== undefined) {
+    if (localTemplate === null) {
+      logWorkflowFallback(options, 'workflow template fallback used', {
+        projectId: project.id,
+        source: 'repo',
+        reason: 'repo workflow file was absent',
+        path: workflowPath
+      });
+    } else {
+      return parseWorkflowTemplate(localTemplate);
     }
-    throw error;
   }
-  return parseWorkflowTemplate(raw);
+
+  if (localTemplate === undefined) {
+    const repoTemplate = await fetchRepoWorkflowTemplate(project, workflowPath, options);
+    if (repoTemplate !== undefined) {
+      return parseWorkflowTemplate(repoTemplate);
+    }
+  }
+
+  const shippedPath = shippedDefaultWorkflowPath(options.env);
+  try {
+    const raw = await readFile(shippedPath, 'utf8');
+    logWorkflowFallback(options, 'workflow template fallback used', {
+      projectId: project.id,
+      source: 'symphony_shipped_default',
+      reason: 'repo workflow file was absent',
+      path: shippedPath
+    });
+    return parseWorkflowTemplate(raw);
+  } catch (error) {
+    if (!isFileNotFoundError(error)) {
+      throw error;
+    }
+  }
+
+  logWorkflowFallback(options, 'workflow template fallback used', {
+    projectId: project.id,
+    source: 'built_in_default',
+    reason: 'repo workflow file and Symphony shipped default were absent',
+    path: shippedPath
+  });
+  return defaultWorkflowTemplate(project);
 }
 
 function defaultWorkflowTemplate(project: ManagedProject): WorkflowTemplate {
@@ -504,6 +542,137 @@ function defaultWorkflowTemplate(project: ManagedProject): WorkflowTemplate {
       'Keep the Linear issue workpad current and validate changes before handing off.'
     ].join('\n')
   };
+}
+
+async function readLocalRepoWorkflowTemplate(project: ManagedProject, workflowPath: string): Promise<string | null | undefined> {
+  const repoPath = projectRepoPath(project);
+  if (repoPath === undefined) {
+    return undefined;
+  }
+
+  try {
+    return await readFile(resolve(repoPath, workflowPath), 'utf8');
+  } catch (error) {
+    if (isFileNotFoundError(error)) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function fetchRepoWorkflowTemplate(
+  project: ManagedProject,
+  workflowPath: string,
+  options: WorkflowSetupValidationOptions
+): Promise<string | undefined> {
+  const githubUrl = project.githubUrl ?? '';
+  const refs = parseGithubRepository(githubUrl);
+  if (refs === undefined) {
+    throw new WorkflowFetchError('workflow_fetch_failed', 'githubUrl', `Workflow could not be fetched: unsupported GitHub URL ${githubUrl}`);
+  }
+
+  const defaultBranch = await resolveGitHubDefaultBranch(refs.owner, refs.repo, options);
+  try {
+    return await (options.sparseCloneWorkflowFile ?? sparseCloneWorkflowFile)(githubUrl, workflowPath, defaultBranch);
+  } catch (error) {
+    if (isFileNotFoundError(error)) {
+      logWorkflowFallback(options, 'workflow template fallback used', {
+        projectId: project.id,
+        source: 'repo',
+        reason: 'repo workflow file was absent',
+        path: workflowPath
+      });
+      return undefined;
+    }
+
+    throw new WorkflowFetchError(
+      'workflow_fetch_failed',
+      'workflow.path',
+      `Workflow could not be fetched from repo: ${error instanceof Error ? error.message : String(error)}`,
+      workflowPath
+    );
+  }
+}
+
+export async function resolveGitHubDefaultBranch(owner: string, repo: string, options: WorkflowSetupValidationOptions = {}): Promise<string> {
+  const headers: Record<string, string> = {
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'symphony-meta-orchestrator-mcp'
+  };
+  const token = options.env?.GITHUB_TOKEN?.trim();
+  if (token !== undefined && token.length > 0) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  let response: Response;
+  try {
+    response = await (options.fetch ?? fetch)(`https://api.github.com/repos/${owner}/${repo}`, { headers });
+  } catch (error) {
+    throw new WorkflowFetchError(
+      'workflow_fetch_failed',
+      'githubUrl',
+      `GitHub repository metadata could not be fetched: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  if (response.status === 401 || response.status === 403) {
+    throw new WorkflowFetchError('workflow_fetch_auth_required', 'GITHUB_TOKEN', 'GitHub authentication is required to fetch the repo workflow.');
+  }
+  if (!response.ok) {
+    throw new WorkflowFetchError('workflow_fetch_failed', 'githubUrl', `GitHub repository metadata request failed with HTTP ${response.status}.`);
+  }
+
+  const body = await response.json() as { default_branch?: unknown };
+  if (typeof body.default_branch !== 'string' || body.default_branch.trim().length === 0) {
+    throw new WorkflowFetchError('workflow_fetch_failed', 'githubUrl', 'GitHub repository metadata did not include a default branch.');
+  }
+  return body.default_branch;
+}
+
+export async function sparseCloneWorkflowFile(githubUrl: string, workflowPath: string, defaultBranch: string): Promise<string> {
+  const checkoutDir = await mkdtemp(join(tmpdir(), 'symphony-workflow-'));
+  try {
+    await execFileAsync('git', ['clone', '--depth=1', '--filter=blob:none', '--sparse', '--no-checkout', '--branch', defaultBranch, githubUrl, checkoutDir]);
+    await execFileAsync('git', ['-C', checkoutDir, 'sparse-checkout', 'set', workflowPath]);
+    await execFileAsync('git', ['-C', checkoutDir, 'checkout']);
+    return await readFile(join(checkoutDir, workflowPath), 'utf8');
+  } finally {
+    await rm(checkoutDir, { recursive: true, force: true });
+  }
+}
+
+function parseGithubRepository(githubUrl: string): { owner: string; repo: string } | undefined {
+  const match = githubUrl.match(/^(?:https:\/\/github\.com\/|git@github\.com:)([^/\s]+)\/([^/\s]+?)(?:\.git)?$/i);
+  if (match === null) {
+    return undefined;
+  }
+  return { owner: match[1], repo: match[2] };
+}
+
+function shippedDefaultWorkflowPath(env: Environment | undefined): string {
+  return join(resolve(env?.SYMPHONY_RUNNER_INSTALL_DIR ?? process.env.SYMPHONY_RUNNER_INSTALL_DIR ?? DEFAULT_SYMPHONY_INSTALL_PATH), 'elixir', 'WORKFLOW.md');
+}
+
+function logWorkflowFallback(options: WorkflowSetupValidationOptions, message: string, fields: Record<string, unknown>): void {
+  if (options.logger !== undefined) {
+    options.logger.info(message, fields);
+    return;
+  }
+  console.error(JSON.stringify({ level: 'info', message, ...fields }));
+}
+
+class WorkflowFetchError extends Error {
+  readonly code: Extract<WorkflowSetupIssueCode, 'workflow_fetch_auth_required' | 'workflow_fetch_failed'>;
+  readonly field: string;
+  readonly path?: string;
+
+  constructor(code: Extract<WorkflowSetupIssueCode, 'workflow_fetch_auth_required' | 'workflow_fetch_failed'>, field: string, message: string, path?: string) {
+    super(message);
+    this.name = 'WorkflowFetchError';
+    this.code = code;
+    this.field = field;
+    this.path = path;
+  }
 }
 
 function isFileNotFoundError(error: unknown): boolean {

@@ -97,7 +97,7 @@ export async function setupManagedProject(input: SetupProjectInput, services: Se
   }
 
   try {
-    workflow = await writeProjectWorkflow(project);
+    workflow = await writeProjectWorkflow(project, { env: services.env });
     steps.push({ name: 'workflow', status: 'ok', output: { workflow } });
   } catch (error) {
     steps.push({ name: 'workflow', status: 'error', error: structuredError(error) });

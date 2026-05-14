@@ -69,6 +69,7 @@ Required local environment:
 SYMPHONY_CONFIG_PATH=
 SYMPHONY_LOG_LEVEL=info
 LINEAR_API_KEY=<linear-api-key>
+GITHUB_TOKEN=<github-token>
 SYMPHONY_RUNNER_COMMAND="node"
 DEFAULT_SYMPHONY_WORKSPACES=/path/to/workspaces
 DEFAULT_SYMPHONY_LOGS=/path/to/logs
@@ -80,7 +81,10 @@ By default, the registry is loaded from
 `~/.config/symphony-meta-orchestrator/registry.yaml`. Set
 `SYMPHONY_CONFIG_PATH` or pass `--config` when you need a different registry
 file. `LINEAR_API_KEY` is required for Linear project and issue creation.
-Registry, workflow, and runner status commands can run without it. Override
+Registry and runner status commands can run without it. `GITHUB_TOKEN` is
+optional for public repositories and is used when fetching repo-owned
+`WORKFLOW.md` templates from GitHub; private repositories or rate-limited
+requests require it. Override
 `SYMPHONY_RUNNER_COMMAND` during local tests when you want the runner manager to
 launch a known local executable instead of the registry command. Runner launch
 arguments are not parsed from this environment variable; configure stable

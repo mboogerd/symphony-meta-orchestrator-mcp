@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -46,7 +46,7 @@ test('createRuntimeConfig defaults to YAML registry config path', () => {
     const runtime = createRuntimeConfig({ cwd, env: {}, argv: [] });
 
     assert.equal(runtime.configPath, join(homedir(), '.config', 'symphony-meta-orchestrator', 'registry.yaml'));
-    assert.equal(runtime.configExists, false);
+    assert.equal(runtime.configExists, existsSync(runtime.configPath));
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
