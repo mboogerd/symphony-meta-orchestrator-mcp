@@ -42,7 +42,7 @@ export function resolveConfigPath(
   cwd: string = process.cwd()
 ): string {
   const argumentPath = readOption(argv, ['--config', '--config-path']);
-  const configuredPath = argumentPath ?? env.SYMPHONY_CONFIG_PATH ?? 'symphony.config.json';
+  const configuredPath = argumentPath ?? env.SYMPHONY_CONFIG_PATH ?? 'symphony.registry.yaml';
   return resolve(cwd, configuredPath);
 }
 
