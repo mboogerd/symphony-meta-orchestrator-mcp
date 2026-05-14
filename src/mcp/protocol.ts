@@ -6,6 +6,7 @@ import { createProjectRegistryService, ProjectRegistryValidationError, type Mana
 import { projectSchemaErrorDetails, projectSchemaHelp } from '../services/registry/schema-help.ts';
 import { createRunnerManager, type RunnerManager } from '../services/runner/index.ts';
 import { validateProjectWorkflowSetups, WorkflowSetupValidationError, writeProjectWorkflow, type PortAvailabilityProbe, type WorkflowSetupValidationPhase } from '../services/workflow/index.ts';
+import { setupProjectDescription } from './tool-descriptions.ts';
 
 // Compatibility JSON-RPC harness retained for direct unit tests and parity checks.
 // The production stdio entrypoint uses the official MCP SDK server in server.ts.
@@ -111,7 +112,7 @@ export async function handleMcpMessage(message: unknown, runtime: McpRuntimeConf
             name: stringSchema(),
             slugId: stringSchema()
           }),
-          tool('setup_project', 'Set up a new managed project end-to-end: create or attach a Linear project, resolve or bootstrap the runner, register defaults, generate workflow, and optionally start the runner. Pass runnerCommand, runnerArgs, and runnerCwd to configure the runner explicitly; otherwise setup_project uses SYMPHONY_RUNNER_COMMAND, repo bin/symphony, or bootstraps from SYMPHONY_RUNNER_REPOSITORY.', setupProjectSchema(), ['name', 'teamKey', 'repoPath', 'runnerPort', 'workspaceRoot', 'logsRoot']),
+          tool('setup_project', setupProjectDescription, setupProjectSchema(), ['name', 'teamKey', 'repoPath', 'runnerPort', 'workspaceRoot', 'logsRoot']),
           tool('create_issue', 'Create one Linear issue.', linearIssueSchema(), ['title']),
           tool('create_issue_batch', 'Create multiple Linear issues.', {
             issues: { type: 'array', items: { type: 'object', properties: linearIssueSchema() } }

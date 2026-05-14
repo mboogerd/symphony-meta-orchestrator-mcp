@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { createRuntimeConfig, handleMcpMessage } from '../src/index.ts';
+import { setupProjectDescription } from '../src/mcp/tool-descriptions.ts';
 import { createLinearService, type LinearSdkClient } from '../src/services/linear/index.ts';
 import { managedProject, managedProjectYaml } from './project-fixtures.ts';
 
@@ -58,6 +59,11 @@ test('MCP tools/list exposes control-plane tools', async () => {
     'get_runner_status',
     'tail_runner_logs'
   ]);
+  const setupProjectTool = tools.find((tool) => tool.name === 'setup_project');
+  assert.equal(setupProjectTool?.description, setupProjectDescription);
+  assert.match(String(setupProjectTool?.description), /repoPath must point to a git repository with an origin remote/);
+  assert.match(String(setupProjectTool?.description), /describe_project_schema and then register_project/);
+  assert.match(String(setupProjectTool?.description), /Partial failures are not automatically rolled back/);
 });
 
 test('MCP describe_project_schema returns register_project guidance and template', async () => {

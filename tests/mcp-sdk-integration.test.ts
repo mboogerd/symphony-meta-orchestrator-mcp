@@ -7,6 +7,7 @@ import test from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createMcpServer, createRuntimeConfig, handleMcpMessage, type JsonRpcResponse, type ManagedProject, type McpServerRuntimeConfig, type RunnerManager } from '../src/index.ts';
+import { setupProjectDescription } from '../src/mcp/tool-descriptions.ts';
 import { LinearService, type LinearSdkClient } from '../src/services/linear/index.ts';
 import { managedProject } from './project-fixtures.ts';
 
@@ -18,9 +19,10 @@ test('SDK MCP lists tools and matches compatibility tool names', async () => {
     try {
       const listed = await sdk.client.listTools();
       const compatibility = await handleMcpMessage({ jsonrpc: '2.0', id: 'tools', method: 'tools/list' }, runtimeFor(fixture.configPath));
-      const compatibilityTools = ((compatibility?.result as Record<string, unknown>).tools as Array<{ name: string }>).map((tool) => tool.name);
+      const compatibilityTools = ((compatibility?.result as Record<string, unknown>).tools as Array<{ name: string; description?: string }>).map((tool) => tool.name);
 
       assert.deepEqual(listed.tools.map((tool) => tool.name), compatibilityTools);
+      assert.equal(listed.tools.find((tool) => tool.name === 'setup_project')?.description, setupProjectDescription);
     } finally {
       await sdk.close();
     }
