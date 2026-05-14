@@ -138,7 +138,7 @@ test('MCP integration sets up a managed project end-to-end with defaults', async
   }
 });
 
-test('MCP integration returns partial setup details when workflow generation fails', async () => {
+test('MCP integration sets up a managed project when a brand-new repo has no workflow file', async () => {
   const fixture = createProjectFixture('mrb71-partial-', { writeWorkflow: false });
   const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
 
@@ -157,17 +157,20 @@ test('MCP integration returns partial setup details when workflow generation fai
     });
 
     assertJsonRpcOk(response, 'setup');
-    const result = response.result as Record<string, unknown>;
-    assert.equal(result.isError, true);
     const payload = toolPayload(response);
-    assert.equal(payload.status, 'invalid');
+    assert.equal(payload.status, 'ok');
     assert.equal(payload.setup.project.id, 'partial-project');
+    assert.deepEqual(payload.setup.project.workflow, {
+      source: 'generated',
+      template: 'default'
+    });
     assert.deepEqual(payload.setup.steps.map((step: { name: string; status: string }) => `${step.name}:${step.status}`), [
       'linearProject:ok',
       'registry:ok',
-      'workflow:error'
+      'workflow:ok',
+      'runner:skipped'
     ]);
-    assert.equal(payload.setup.steps[2].error.name, 'WorkflowSetupValidationError');
+    assert.equal(payload.setup.workflow.workflowPath, join(fixture.workspacePath, 'WORKFLOW.md'));
   } finally {
     fixture.cleanup();
   }
