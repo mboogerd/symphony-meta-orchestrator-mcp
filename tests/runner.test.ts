@@ -132,7 +132,7 @@ test('runner manager start reports readiness timeout with log path and excerpt',
 
     const started = await manager.start(project);
 
-    assert.equal(started.started, true);
+    assert.equal(started.started, false);
     assert.equal(started.status.state, 'unhealthy');
     assert.equal(started.status.details.readiness, 'timeout');
     assert.match(started.status.details.message, /timed out/);
@@ -163,6 +163,7 @@ test('runner manager start reports early process exit with recent logs', async (
 
     const started = await manager.start(project);
 
+    assert.equal(started.started, false);
     assert.equal(started.status.state, 'unhealthy');
     assert.equal(started.status.details.readiness, 'exited');
     assert.match(started.status.details.message, /exited before readiness/);
