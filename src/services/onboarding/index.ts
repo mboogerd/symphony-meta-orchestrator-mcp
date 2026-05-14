@@ -1,9 +1,13 @@
-import { mkdir } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { access, mkdir } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
+import { promisify } from 'node:util';
 import type { LinearProjectReference, LinearService, LinearTeamReference } from '../linear/index.ts';
 import type { ManagedProject, ProjectRegistryService } from '../registry/index.ts';
 import type { RunnerManager, RunnerStartResult } from '../runner/index.ts';
 import { writeProjectWorkflow, type WorkflowRenderResult } from '../workflow/index.ts';
+
+const execFileAsync = promisify(execFile);
 
 export type SetupProjectInput = {
   name: string;
@@ -60,7 +64,7 @@ export async function setupManagedProject(input: SetupProjectInput, services: Se
   }
 
   try {
-    project = buildManagedProject(input, team, linearProject);
+    project = await buildManagedProject(input, team, linearProject);
     project = await services.registry.create(project);
     steps.push({ name: 'registry', status: 'ok', output: { project } });
   } catch (error) {
@@ -92,10 +96,11 @@ export async function setupManagedProject(input: SetupProjectInput, services: Se
   return { team, linearProject, project, workflow, runner, steps };
 }
 
-function buildManagedProject(input: SetupProjectInput, team: LinearTeamReference, linearProject: LinearProjectReference): ManagedProject {
+async function buildManagedProject(input: SetupProjectInput, team: LinearTeamReference, linearProject: LinearProjectReference): Promise<ManagedProject> {
   const repoPath = resolve(input.repoPath);
   const workspaceRoot = resolve(input.workspaceRoot);
   const logsRoot = resolve(input.logsRoot);
+  const repoRemote = await resolveRepoRemote(repoPath);
 
   return {
     id: slugify(input.name),
@@ -109,9 +114,9 @@ function buildManagedProject(input: SetupProjectInput, team: LinearTeamReference
     },
     repo: {
       path: repoPath,
-      remoteUrl: repoPath,
+      remoteUrl: repoRemote ?? repoPath,
       defaultBranch: 'main',
-      cloneSource: repoPath
+      cloneSource: repoRemote ?? repoPath
     },
     workflow: {
       source: 'generated',
@@ -139,6 +144,58 @@ function buildManagedProject(input: SetupProjectInput, team: LinearTeamReference
       }
     }
   };
+}
+
+async function resolveRepoRemote(repoPath: string): Promise<string | undefined> {
+  if (!await isGitRepo(repoPath)) {
+    return undefined;
+  }
+
+  try {
+    const { stdout } = await execFileAsync('git', ['-C', repoPath, 'remote', 'get-url', 'origin']);
+    const remoteUrl = stdout.trim();
+    if (remoteUrl.length > 0) {
+      return remoteUrl;
+    }
+  } catch {
+    // Fall through to the actionable setup error below.
+  }
+
+  throw new SetupProjectValidationError(
+    'repo_remote_missing',
+    'repo.remoteUrl',
+    `Git origin remote is not configured for ${repoPath}; add a real origin remote or register the project with explicit repo.remoteUrl and repo.cloneSource.`
+  );
+}
+
+async function isGitRepo(repoPath: string): Promise<boolean> {
+  try {
+    await access(resolve(repoPath, '.git'));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+class SetupProjectValidationError extends Error {
+  readonly code: string;
+  readonly field: string;
+
+  constructor(code: string, field: string, message: string) {
+    super(message);
+    this.name = 'SetupProjectValidationError';
+    this.code = code;
+    this.field = field;
+  }
+
+  toJSON(): Record<string, unknown> {
+    return {
+      name: this.name,
+      code: this.code,
+      field: this.field,
+      message: this.message
+    };
+  }
 }
 
 function slugify(value: string): string {
