@@ -153,6 +153,32 @@ export async function handleMcpMessage(message: unknown, runtime: McpRuntimeConf
               }
             }
           }, ['projectId', 'issues']),
+          tool('create_linear_project_planned_issue_batch', 'Create multiple planned issues in a Linear project by raw team/project IDs and link dependencies by stable client keys.', {
+            teamId: stringSchema(),
+            teamKey: stringSchema(),
+            linearProjectId: stringSchema(),
+            issues: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  key: stringSchema(),
+                  ...projectIssueSchema()
+                },
+                required: ['key', 'title'],
+                additionalProperties: false
+              }
+            },
+            dependencies: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: { from: stringSchema(), blocks: stringSchema() },
+                required: ['from', 'blocks'],
+                additionalProperties: false
+              }
+            }
+          }, ['linearProjectId', 'issues']),
           tool('promote_ready_issue', 'Explicitly move a managed-project issue from Backlog to Todo.', {
             projectId: stringSchema(),
             issueId: stringSchema()
@@ -289,6 +315,18 @@ async function handleToolCall(message: JsonRpcRequest, runtime: McpRuntimeConfig
     if (name === 'create_planned_issue_batch') {
       return toolResult(message.id ?? null, {
         batch: await linear(runtime).createPlannedIssueBatch(await requireProject(runtime, argumentsValue.projectId), {
+          issues: Array.isArray(argumentsValue.issues) ? argumentsValue.issues as never : [],
+          dependencies: Array.isArray(argumentsValue.dependencies) ? argumentsValue.dependencies as never : undefined
+        })
+      });
+    }
+
+    if (name === 'create_linear_project_planned_issue_batch') {
+      return toolResult(message.id ?? null, {
+        batch: await linear(runtime).createLinearProjectPlannedIssueBatch({
+          teamId: optionalString(argumentsValue.teamId),
+          teamKey: optionalString(argumentsValue.teamKey),
+          linearProjectId: requiredString(argumentsValue.linearProjectId, 'linearProjectId'),
           issues: Array.isArray(argumentsValue.issues) ? argumentsValue.issues as never : [],
           dependencies: Array.isArray(argumentsValue.dependencies) ? argumentsValue.dependencies as never : undefined
         })
