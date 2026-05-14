@@ -20,6 +20,7 @@ import {
   WorkflowSetupValidationError,
   writeProjectWorkflow
 } from '../services/workflow/index.ts';
+import { setupProjectDescription } from './tool-descriptions.ts';
 
 const optionalString = z.string().trim().min(1).optional();
 const requiredString = z.string().trim().min(1);
@@ -158,7 +159,7 @@ function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void
   }, async (args) => withToolErrors(async () => toolResult({ projects: await linear(runtime).findProjects(args) })));
 
   server.registerTool('setup_project', {
-    description: 'Set up a new managed project end-to-end: create or attach a Linear project, resolve or bootstrap the runner, register defaults, generate workflow, and optionally start the runner. Pass runnerCommand, runnerArgs, and runnerCwd to configure the runner explicitly; otherwise setup_project uses SYMPHONY_RUNNER_COMMAND, repo bin/symphony, or bootstraps from SYMPHONY_RUNNER_REPOSITORY.',
+    description: setupProjectDescription,
     inputSchema: {
       name: requiredString,
       teamKey: requiredString,
