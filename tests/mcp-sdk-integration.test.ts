@@ -248,8 +248,10 @@ test('SDK MCP runner lifecycle tools use mocked runner and setup probes', async 
   const fixture = createProjectFixture('mrb27-sdk-runner-');
   const runnerCalls: string[] = [];
   const checkedPorts: number[] = [];
+  const previousRunnerCommand = process.env.SYMPHONY_RUNNER_COMMAND;
 
   try {
+    process.env.SYMPHONY_RUNNER_COMMAND = process.execPath;
     const runtime = runtimeFor(fixture.configPath, {
       createRunnerManager: () => mockRunnerManager(runnerCalls),
       portAvailable: async (port) => {
@@ -284,6 +286,11 @@ test('SDK MCP runner lifecycle tools use mocked runner and setup probes', async 
       await sdk.close();
     }
   } finally {
+    if (previousRunnerCommand === undefined) {
+      delete process.env.SYMPHONY_RUNNER_COMMAND;
+    } else {
+      process.env.SYMPHONY_RUNNER_COMMAND = previousRunnerCommand;
+    }
     fixture.cleanup();
   }
 });

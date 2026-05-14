@@ -332,6 +332,7 @@ function attachRuntimeHints(project: Record<string, unknown>, registryDir: strin
   const workspaceRoot = join(registryDir, 'workspace');
   const logsRoot = join(registryDir, 'logs');
   const repoPath = join(registryDir, 'repo');
+  const command = process.env.SYMPHONY_RUNNER_COMMAND?.trim();
 
   Object.defineProperties(project, {
     repo: {
@@ -356,7 +357,7 @@ function attachRuntimeHints(project: Record<string, unknown>, registryDir: strin
     symphony: {
       enumerable: false,
       value: {
-        command: process.env.SYMPHONY_RUNNER_COMMAND ?? process.execPath,
+        ...(command === undefined || command.length === 0 ? {} : { command }),
         workspaceRoot,
         logsRoot
       }
