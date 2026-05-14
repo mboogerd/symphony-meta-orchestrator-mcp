@@ -211,7 +211,7 @@ test('SDK MCP setup_project can attach an existing Linear project', async () => 
       assert.equal(payload.status, 'ok');
       assert.equal(payload.setup.project.tracker.projectId, 'existing-project-id');
       assert.equal(payload.setup.project.tracker.projectSlug, 'existing-project-slug');
-      assert.deepEqual(calls.map((call) => call.method), ['teams', 'projects']);
+      assert.deepEqual(calls.map((call) => call.method), ['teams', 'teams', 'team.projects']);
     } finally {
       await sdk.close();
     }
@@ -490,21 +490,32 @@ function mockLinearClient(calls: Array<{ method: string; input: Record<string, u
     },
     async projects(input) {
       calls.push({ method: 'projects', input: input ?? {} });
-      if (input?.filter?.id?.eq === 'existing-project-id' && input?.filter?.teams?.id?.eq === 'linear-team-id') {
-        return {
-          nodes: [{
-            id: 'existing-project-id',
-            name: 'Existing SDK Project',
-            slugId: 'existing-project-slug',
-            url: 'https://linear.example/existing-project'
-          }]
-        };
-      }
       return { nodes: [] };
     },
     async teams(input) {
       calls.push({ method: 'teams', input: input ?? {} });
-      return { nodes: [{ id: 'linear-team-id', key: 'MRB', name: 'MRB', description: 'Main team' }] };
+      return {
+        nodes: [{
+          id: 'linear-team-id',
+          key: 'MRB',
+          name: 'MRB',
+          description: 'Main team',
+          async projects(projectsInput) {
+            calls.push({ method: 'team.projects', input: projectsInput ?? {} });
+            if (projectsInput?.filter?.id?.eq === 'existing-project-id') {
+              return {
+                nodes: [{
+                  id: 'existing-project-id',
+                  name: 'Existing SDK Project',
+                  slugId: 'existing-project-slug',
+                  url: 'https://linear.example/existing-project'
+                }]
+              };
+            }
+            return { nodes: [] };
+          }
+        }]
+      };
     },
     async workflowStates(input) {
       calls.push({ method: 'workflowStates', input: input ?? {} });
