@@ -449,14 +449,13 @@ test('MCP integration rejects setup for a non-GitHub URL', async () => {
     const payload = toolPayload(response);
     assert.equal(payload.status, 'invalid');
     assert.deepEqual(payload.setup.steps.map((step: { name: string; status: string }) => `${step.name}:${step.status}`), [
-      'linearProject:ok',
-      'bootstrap:ok',
-      'registry:error'
+      'linearProject:error'
     ]);
-    assert.equal(payload.setup.steps[2].error.code, 'github_url_invalid');
-    assert.equal(payload.setup.steps[2].error.field, 'githubUrl');
-    assert.match(payload.setup.steps[2].error.message, /GitHub repository URL/);
+    assert.equal(payload.setup.steps[0].error.code, 'github_url_invalid');
+    assert.equal(payload.setup.steps[0].error.field, 'githubUrl');
+    assert.match(payload.setup.steps[0].error.message, /GitHub repository URL/);
     assert.equal(payload.setup.project, undefined);
+    assert.deepEqual(calls.map((call) => call.method), ['teams']);
   } finally {
     fixture.cleanup();
   }

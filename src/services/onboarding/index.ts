@@ -5,7 +5,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { Environment } from '../../config/env.ts';
 import { linearProjectUrlSlug, type LinearProjectReference, type LinearService, type LinearTeamReference } from '../linear/index.ts';
-import type { ManagedProject, ProjectRegistryService } from '../registry/index.ts';
+import type { ManagedProject, ManagedProjectRegistry, ProjectRegistryService } from '../registry/index.ts';
 import type { RunnerManager, RunnerStartResult } from '../runner/index.ts';
 import { writeProjectWorkflow, type WorkflowRenderResult } from '../workflow/index.ts';
 
@@ -67,7 +67,16 @@ export async function setupManagedProject(input: SetupProjectInput, services: Se
 
   try {
     team = await services.linear.resolveTeam(input.teamKey);
-    if (input.linearProjectId) {
+    const registry = await services.registry.load();
+    const registryMatch = findRegistryMatch(input, registry);
+    if (registryMatch !== undefined) {
+      const existingLinearProject = projectLinearReference(registryMatch.project);
+      if (registryMatch.resumable && existingLinearProject !== undefined) {
+        linearProject = await services.linear.resolveProjectForTeam(existingLinearProject.id, team.id);
+      } else {
+        throw new SetupProjectRegistryConflictError(registryMatch);
+      }
+    } else if (input.linearProjectId) {
       linearProject = await services.linear.resolveProjectForTeam(input.linearProjectId, team.id);
     } else {
       linearProject = await services.linear.findProjectByNameForTeam(input.name, team.id)
@@ -88,9 +97,17 @@ export async function setupManagedProject(input: SetupProjectInput, services: Se
   }
 
   try {
-    project = await buildManagedProject(input, team, linearProject, runnerConfig, services.env ?? process.env);
-    project = await services.registry.create(project);
-    steps.push({ name: 'registry', status: 'ok', output: { project } });
+    const registry = await services.registry.load();
+    const registryMatch = findRegistryMatch(input, registry);
+    if (registryMatch?.resumable === true) {
+      project = { ...registryMatch.project };
+      attachSetupRuntimeHints(project, team, linearProject, runnerConfig, services.env ?? process.env);
+      steps.push({ name: 'registry', status: 'skipped', output: { project, reason: 'project already exists in registry' } });
+    } else {
+      project = await buildManagedProject(input, team, linearProject, runnerConfig, services.env ?? process.env);
+      project = await services.registry.create(project);
+      steps.push({ name: 'registry', status: 'ok', output: { project } });
+    }
   } catch (error) {
     steps.push({ name: 'registry', status: 'error', error: structuredError(error) });
     return { team, linearProject, project, steps };
@@ -117,6 +134,113 @@ export async function setupManagedProject(input: SetupProjectInput, services: Se
   }
 
   return { team, linearProject, project, workflow, runner, steps };
+}
+
+type RegistryMatch = {
+  project: ManagedProject;
+  duplicateFields: Array<'id' | 'githubUrl'>;
+  resumable: boolean;
+};
+
+class SetupProjectRegistryConflictError extends Error {
+  readonly code = 'project_registry_conflict';
+  readonly fields: string[];
+  readonly projectId: string;
+
+  constructor(match: RegistryMatch) {
+    const fields = match.duplicateFields;
+    super(
+      `Project registry already contains project "${match.project.id}" with matching ${fields.join(' and ')}. ` +
+      'Use the existing managed project entry or provide a different name/githubUrl.'
+    );
+    this.name = 'SetupProjectRegistryConflictError';
+    this.fields = fields;
+    this.projectId = match.project.id;
+  }
+
+  toJSON(): Record<string, unknown> {
+    return {
+      name: this.name,
+      code: this.code,
+      fields: this.fields,
+      projectId: this.projectId,
+      message: this.message
+    };
+  }
+}
+
+function findRegistryMatch(input: SetupProjectInput, registry: ManagedProjectRegistry): RegistryMatch | undefined {
+  const projectSlug = slugify(input.name);
+  const githubUrl = normalizeGithubUrl(input.githubUrl);
+
+  for (const project of registry.projects) {
+    const duplicateFields: Array<'id' | 'githubUrl'> = [];
+    if (project.id === projectSlug) {
+      duplicateFields.push('id');
+    }
+    if (project.githubUrl === githubUrl) {
+      duplicateFields.push('githubUrl');
+    }
+    if (duplicateFields.length > 0) {
+      return {
+        project,
+        duplicateFields,
+        resumable: duplicateFields.length === 2 && projectLinearReference(project) !== undefined
+      };
+    }
+  }
+
+  return undefined;
+}
+
+function projectLinearReference(project: ManagedProject): LinearProjectReference | undefined {
+  const tracker = readObjectProperty(project, 'tracker');
+  const projectId = readStringProperty(tracker, 'projectId');
+  if (projectId === undefined) {
+    return undefined;
+  }
+
+  return {
+    id: projectId,
+    name: readStringProperty(project, 'name') ?? projectId,
+    url: linearProjectUrlFromTracker(tracker, projectId)
+  };
+}
+
+function attachSetupRuntimeHints(
+  project: ManagedProject,
+  team: LinearTeamReference,
+  linearProject: LinearProjectReference,
+  runner: RunnerBootstrapResult,
+  env: Environment
+): void {
+  const projectSlug = project.id;
+  const { workspaceRoot, logsRoot } = resolveProjectPaths(projectSlug, env);
+
+  Object.defineProperties(project, {
+    tracker: {
+      enumerable: false,
+      configurable: true,
+      value: {
+        kind: 'linear',
+        teamKey: team.key,
+        teamId: team.id,
+        projectId: linearProject.id,
+        projectSlug: linearProjectUrlSlug(linearProject)
+      }
+    },
+    symphony: {
+      enumerable: false,
+      configurable: true,
+      value: {
+        command: runner.command,
+        args: runner.args,
+        cwd: runner.cwd,
+        workspaceRoot,
+        logsRoot
+      }
+    }
+  });
 }
 
 async function buildManagedProject(
@@ -304,4 +428,31 @@ function structuredError(error: unknown): Record<string, unknown> {
     name: 'Error',
     message: String(error)
   };
+}
+
+function readObjectProperty(value: unknown, key: string): Record<string, unknown> | undefined {
+  if (value === null || typeof value !== 'object') {
+    return undefined;
+  }
+
+  const property = (value as Record<string, unknown>)[key];
+  return property !== null && typeof property === 'object' && !Array.isArray(property)
+    ? property as Record<string, unknown>
+    : undefined;
+}
+
+function readStringProperty(value: unknown, key: string): string | undefined {
+  if (value === null || typeof value !== 'object') {
+    return undefined;
+  }
+
+  const property = (value as Record<string, unknown>)[key];
+  return typeof property === 'string' && property.trim().length > 0 ? property : undefined;
+}
+
+function linearProjectUrlFromTracker(tracker: Record<string, unknown> | undefined, projectId: string): string {
+  const projectSlug = readStringProperty(tracker, 'projectSlug');
+  return projectSlug === undefined
+    ? `https://linear.app/project/${projectId}`
+    : `https://linear.app/project/${projectSlug}`;
 }
