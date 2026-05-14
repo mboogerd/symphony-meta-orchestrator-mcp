@@ -354,6 +354,62 @@ test('operational validation requires Linear slug when Linear validation is requ
   }
 });
 
+test('operational validation rejects unresolved Linear project slug', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb129-linear-unresolved-'));
+  const repoPath = join(cwd, 'repo');
+
+  try {
+    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    writeFileSync(join(repoPath, 'WORKFLOW.md'), 'Prompt body.');
+    const project = managedProject({ id: 'dummy', repoPath, workspaceRoot: join(cwd, 'workspace'), logsRoot: join(cwd, 'logs') });
+    project.tracker.projectId = 'linear-project-id';
+    project.tracker.projectSlug = 'dummy';
+
+    const validation = await validateProjectWorkflowSetup(project, {
+      validateLinear: true,
+      env: { LINEAR_API_KEY: 'token' },
+      linear: { resolveProjectSlug: async () => undefined },
+      ...mockRepoWorkflowOptions(project)
+    });
+
+    assert.equal(validation.ok, false);
+    assert.equal(validation.subsystems.linear.errors[0]?.code, 'linear_project_not_found');
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('operational validation accepts a resolved Linear project slug', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb129-linear-resolved-'));
+  const repoPath = join(cwd, 'repo');
+
+  try {
+    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    writeFileSync(join(repoPath, 'WORKFLOW.md'), 'Prompt body.');
+    const project = managedProject({ repoPath, workspaceRoot: join(cwd, 'workspace'), logsRoot: join(cwd, 'logs') });
+
+    const validation = await validateProjectWorkflowSetup(project, {
+      validateLinear: true,
+      env: { LINEAR_API_KEY: 'token' },
+      linear: {
+        resolveProjectSlug: async (projectSlug) => ({
+          id: 'linear-project-id',
+          name: 'Meta Orchestrator',
+          slugId: projectSlug,
+          url: `https://linear.example/project/${projectSlug}`,
+          teamId: 'linear-team-id'
+        })
+      },
+      ...mockRepoWorkflowOptions(project)
+    });
+
+    assert.equal(validation.subsystems.linear.ok, true);
+    assert.deepEqual(validation.subsystems.linear.errors, []);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test('render validation skips live runner port checks', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'mrb24-render-phase-'));
 

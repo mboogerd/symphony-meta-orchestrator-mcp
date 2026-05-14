@@ -249,6 +249,7 @@ async function handleToolCall(message: JsonRpcRequest, runtime: McpRuntimeConfig
         registry: loadedRegistry,
         phase: readValidationPhase(argumentsValue),
         validateLinear: argumentsValue.validateLinear === true,
+        linear: argumentsValue.validateLinear === true ? linear(runtime) : undefined,
         env: runtime.env,
         portAvailable: runtime.mcpServices?.portAvailable
       });
