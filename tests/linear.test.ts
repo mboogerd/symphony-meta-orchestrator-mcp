@@ -125,6 +125,29 @@ test('Linear service creates issues in Backlog by default and can move state', a
   assert.deepEqual(updated[0], { id: 'issue-1', input: { stateId: 'state-In Progress' } });
 });
 
+test('Linear service resolves lazy SDK issue payloads', async () => {
+  const service = createLinearService({
+    client: fakeClient({
+      async createIssue() {
+        return {
+          issue: Promise.resolve({ id: 'issue-1', identifier: 'MRB-1', url: 'https://linear.app/acme/issue/MRB-1/test' })
+        };
+      },
+      async updateIssue(id) {
+        return {
+          issue: Promise.resolve({ id, identifier: 'MRB-1', url: 'https://linear.app/acme/issue/MRB-1/test' })
+        };
+      }
+    })
+  });
+
+  const created = await service.createIssue({ title: 'test', teamKey: 'MRB' });
+  const moved = await service.moveIssueToState('issue-1', 'Todo', 'team-1');
+
+  assert.deepEqual(created, { id: 'issue-1', identifier: 'MRB-1', url: 'https://linear.app/acme/issue/MRB-1/test' });
+  assert.deepEqual(moved, { id: 'issue-1', identifier: 'MRB-1', url: 'https://linear.app/acme/issue/MRB-1/test' });
+});
+
 test('Linear service creates issue batches with resolved Backlog states', async () => {
   const batches: Record<string, unknown>[] = [];
   const service = createLinearService({
