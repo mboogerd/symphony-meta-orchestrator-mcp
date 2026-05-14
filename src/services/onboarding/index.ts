@@ -10,7 +10,7 @@ import type { RunnerManager, RunnerStartResult } from '../runner/index.ts';
 import { writeProjectWorkflow, type WorkflowRenderResult } from '../workflow/index.ts';
 
 const execFileAsync = promisify(execFile);
-const DEFAULT_SYMPHONY_REPOSITORY = 'https://github.com/mboogerd/symphony.git';
+const DEFAULT_SYMPHONY_REPOSITORY = 'https://github.com/openai/symphony.git';
 const DEFAULT_SYMPHONY_INSTALL_PATH = join(homedir(), '.local', 'share', 'symphony-meta-orchestrator', 'symphony');
 const SYMPHONY_GUARDRAIL_FLAG = '--i-understand-that-this-will-be-running-without-the-usual-guardrails';
 
@@ -245,7 +245,11 @@ export async function bootstrapSymphonyRunner(_repoPath: string): Promise<Runner
 
   if (!await directoryHasEntries(installPath)) {
     await mkdir(dirname(installPath), { recursive: true });
-    await execFileAsync('git', ['clone', repository, installPath]);
+    try {
+      await execFileAsync('git', ['clone', repository, installPath]);
+    } catch (error) {
+      throw new SymphonyRunnerBootstrapError(repository, installPath, error);
+    }
   }
 
   return {
@@ -253,6 +257,26 @@ export async function bootstrapSymphonyRunner(_repoPath: string): Promise<Runner
     args: [join(installPath, 'bin', 'symphony'), SYMPHONY_GUARDRAIL_FLAG],
     cwd: installPath
   };
+}
+
+class SymphonyRunnerBootstrapError extends Error {
+  readonly repository: string;
+  readonly installPath: string;
+  readonly cause: unknown;
+
+  constructor(repository: string, installPath: string, cause: unknown) {
+    const detail = cause instanceof Error ? `\n\n${cause.message}` : `\n\n${String(cause)}`;
+    super(
+      `Bootstrap failed while cloning Symphony runner from ${repository} into ${installPath}. ` +
+      'Provide setup_project runnerCommand, set SYMPHONY_RUNNER_COMMAND to an executable runner, ' +
+      'or override the bootstrap repository with SYMPHONY_RUNNER_REPOSITORY.' +
+      detail
+    );
+    this.name = 'SymphonyRunnerBootstrapError';
+    this.repository = repository;
+    this.installPath = installPath;
+    this.cause = cause;
+  }
 }
 
 async function executableExists(path: string): Promise<boolean> {
