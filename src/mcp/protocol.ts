@@ -112,7 +112,7 @@ export async function handleMcpMessage(message: unknown, runtime: McpRuntimeConf
             name: stringSchema(),
             slugId: stringSchema()
           }),
-          tool('setup_project', setupProjectDescription, setupProjectSchema(), ['name', 'teamKey', 'repoPath', 'runnerPort', 'workspaceRoot', 'logsRoot']),
+          tool('setup_project', setupProjectDescription, setupProjectSchema(), ['name', 'teamKey', 'githubUrl', 'runnerPort']),
           tool('create_issue', 'Create one Linear issue.', linearIssueSchema(), ['title']),
           tool('create_issue_batch', 'Create multiple Linear issues.', {
             issues: { type: 'array', items: { type: 'object', properties: linearIssueSchema() } }
@@ -279,7 +279,8 @@ async function handleToolCall(message: JsonRpcRequest, runtime: McpRuntimeConfig
         linear: linear(runtime),
         registry,
         runnerManager: runnerManager(runtime),
-        runnerBootstrap: runtime.mcpServices?.runnerBootstrap
+        runnerBootstrap: runtime.mcpServices?.runnerBootstrap,
+        env: runtime.env
       });
       return toolResult(message.id ?? null, { setup }, setup.steps.some((step) => step.status === 'error'));
     }
@@ -569,12 +570,10 @@ function setupProjectSchema(): Record<string, unknown> {
   return {
     name: stringSchema(),
     teamKey: stringSchema(),
-    repoPath: stringSchema(),
+    githubUrl: stringSchema(),
     runnerPort: { type: 'integer', minimum: 1, maximum: 65535 },
     workspaceRoot: stringSchema(),
     logsRoot: stringSchema(),
-    remoteUrl: stringSchema(),
-    cloneSource: stringSchema(),
     runnerCommand: stringSchema(),
     runnerArgs: { type: 'array', items: stringSchema() },
     runnerCwd: stringSchema(),
@@ -592,12 +591,10 @@ function readSetupProjectInput(value: Record<string, unknown>) {
   return {
     name: requiredString(value.name, 'name'),
     teamKey: requiredString(value.teamKey, 'teamKey'),
-    repoPath: requiredString(value.repoPath, 'repoPath'),
+    githubUrl: requiredString(value.githubUrl, 'githubUrl'),
     runnerPort,
-    workspaceRoot: requiredString(value.workspaceRoot, 'workspaceRoot'),
-    logsRoot: requiredString(value.logsRoot, 'logsRoot'),
-    remoteUrl: optionalString(value.remoteUrl),
-    cloneSource: optionalString(value.cloneSource),
+    workspaceRoot: optionalString(value.workspaceRoot),
+    logsRoot: optionalString(value.logsRoot),
     runnerCommand: optionalString(value.runnerCommand),
     runnerArgs: optionalStringArray(value.runnerArgs, 'runnerArgs'),
     runnerCwd: optionalString(value.runnerCwd),
