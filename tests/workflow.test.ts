@@ -85,6 +85,27 @@ test('writeProjectWorkflow renders when runner port is occupied', async () => {
   }
 });
 
+test('writeProjectWorkflow bootstraps missing repo-owned workflow path', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb79-workflow-bootstrap-'));
+  const repoPath = join(cwd, 'repo');
+  const logsRoot = join(cwd, 'logs');
+
+  try {
+    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+
+    const workflow = await writeProjectWorkflow(managedProject({ repoPath, workspaceRoot: repoPath, logsRoot }));
+    const parsed = parseWorkflow(workflow.content);
+
+    assert.equal(workflow.workflowPath, join(repoPath, 'WORKFLOW.md'));
+    assert.equal(existsSync(workflow.workflowPath), true);
+    assert.equal(parsed.frontMatter.tracker.kind, 'linear');
+    assert.equal(parsed.frontMatter.workspace.root, repoPath);
+    assert.match(parsed.body, /You are working on a Linear ticket/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test('workflow safely quotes clone sources and targets in generated hook commands', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'mrb25-workflow-quote-'));
   const repoPath = join(cwd, 'repo');
