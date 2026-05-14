@@ -313,13 +313,13 @@ async function handleToolCall(message: JsonRpcRequest, runtime: McpRuntimeConfig
     if (name === 'create_project_issue') {
       const { projectId, ...issue } = argumentsValue;
       return toolResult(message.id ?? null, {
-        issue: await linear(runtime).createProjectIssue(await requireProject(runtime, projectId), issue as never)
+        issue: await projectScopedLinear(runtime).createProjectIssue(await requireProject(runtime, projectId), issue as never)
       });
     }
 
     if (name === 'create_planned_issue_batch') {
       return toolResult(message.id ?? null, {
-        batch: await linear(runtime).createPlannedIssueBatch(await requireProject(runtime, argumentsValue.projectId), {
+        batch: await projectScopedLinear(runtime).createPlannedIssueBatch(await requireProject(runtime, argumentsValue.projectId), {
           issues: Array.isArray(argumentsValue.issues) ? argumentsValue.issues as never : [],
           dependencies: Array.isArray(argumentsValue.dependencies) ? argumentsValue.dependencies as never : undefined
         })
@@ -340,7 +340,7 @@ async function handleToolCall(message: JsonRpcRequest, runtime: McpRuntimeConfig
 
     if (name === 'promote_ready_issue') {
       return toolResult(message.id ?? null, {
-        issue: await linear(runtime).promoteReadyIssue(
+        issue: await projectScopedLinear(runtime).promoteReadyIssue(
           await requireProject(runtime, argumentsValue.projectId),
           requiredString(argumentsValue.issueId, 'issueId')
         )
@@ -349,7 +349,7 @@ async function handleToolCall(message: JsonRpcRequest, runtime: McpRuntimeConfig
 
     if (name === 'link_project_issue_dependency') {
       return toolResult(message.id ?? null, {
-        dependency: await linear(runtime).linkProjectIssueDependency(await requireProject(runtime, argumentsValue.projectId), {
+        dependency: await projectScopedLinear(runtime).linkProjectIssueDependency(await requireProject(runtime, argumentsValue.projectId), {
           blockingIssueId: requiredString(argumentsValue.blockingIssueId, 'blockingIssueId'),
           blockedIssueId: requiredString(argumentsValue.blockedIssueId, 'blockedIssueId')
         })
@@ -425,6 +425,19 @@ function linear(runtime: McpRuntimeConfig) {
         apiKey: runtime.env.LINEAR_API_KEY,
         projectCache: new LinearProjectCache(service, teamKey)
       });
+}
+
+function projectScopedLinear(runtime: McpRuntimeConfig) {
+  const teamKey = runtime.env.LINEAR_TEAM_KEY ?? runtime.env.SYMPHONY_LINEAR_TEAM_KEY;
+  if (teamKey === undefined) {
+    throw new McpToolError(
+      'missing_team_key',
+      'LINEAR_TEAM_KEY must be set in the MCP server environment to use project-scoped Linear tools',
+      { env: ['LINEAR_TEAM_KEY', 'SYMPHONY_LINEAR_TEAM_KEY'] }
+    );
+  }
+
+  return linear(runtime);
 }
 
 function runnerManager(runtime: McpRuntimeConfig) {

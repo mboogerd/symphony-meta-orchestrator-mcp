@@ -129,6 +129,7 @@ test('SDK MCP Linear planning tools use mocked service boundaries', async () => 
     const runtime = runtimeFor(fixture.configPath, {
       createLinearService: () => new LinearService({ client: mockLinearClient(calls) })
     });
+    runtime.env.LINEAR_TEAM_KEY = 'MRB';
     const sdk = await createSdkHarness(runtime);
     try {
       await sdk.client.callTool({ name: 'register_project', arguments: { project: fixture.project } });
