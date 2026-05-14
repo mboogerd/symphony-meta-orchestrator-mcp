@@ -125,6 +125,43 @@ test('Linear service resolves project slug metadata when create payload omits it
   assert.deepEqual(projectQueries[0], { filter: { id: { eq: 'project-1' } }, first: 1 });
 });
 
+test('Linear service finds projects by case-insensitive name substring and slug', async () => {
+  const projectQueries: Record<string, unknown>[] = [];
+  const service = createLinearService({
+    client: fakeClient({
+      async projects(variables) {
+        projectQueries.push(variables ?? {});
+        return {
+          nodes: [{
+            id: 'project-1',
+            name: 'Symphony Meta-Orchestrator MCP',
+            slugId: 'symphony-meta-orchestrator-mcp-d4c50743a53d',
+            url: 'https://linear.app/mrboo/project/symphony-meta-orchestrator-mcp-d4c50743a53d',
+            teams: { nodes: [{ id: 'team-1', key: 'MRB' }] }
+          }]
+        };
+      }
+    })
+  });
+
+  const projects = await service.findProjects({ name: 'meta-orchestrator', slugId: 'symphony-meta-orchestrator-mcp-d4c50743a53d' });
+
+  assert.deepEqual(projectQueries[0], {
+    filter: {
+      name: { containsIgnoreCase: 'meta-orchestrator' },
+      slugId: { eq: 'symphony-meta-orchestrator-mcp-d4c50743a53d' }
+    },
+    first: 50
+  });
+  assert.deepEqual(projects, [{
+    id: 'project-1',
+    name: 'Symphony Meta-Orchestrator MCP',
+    slugId: 'symphony-meta-orchestrator-mcp-d4c50743a53d',
+    url: 'https://linear.app/mrboo/project/symphony-meta-orchestrator-mcp-d4c50743a53d',
+    teamId: 'team-1'
+  }]);
+});
+
 test('Linear service creates issues in Backlog by default and can move state', async () => {
   const created: Record<string, unknown>[] = [];
   const updated: Array<{ id: string; input: Record<string, unknown> }> = [];

@@ -15,6 +15,15 @@ export type LinearProjectReference = {
   teamId: string;
 };
 
+export type LinearProjectLookupResult = LinearProjectReference & {
+  teamId: string;
+};
+
+export type FindLinearProjectInput = {
+  name?: string;
+  slugId?: string;
+};
+
 export type LinearTeamReference = {
   id: string;
   key: string;
@@ -123,7 +132,15 @@ export type LinearSdkClient = {
 type LinearPayload<Key extends string, Value> = { success?: boolean } & { [K in Key]?: MaybePromise<Value> };
 type LinearConnection<Node> = { nodes: Node[] };
 type LinearTeamLike = { id: string; key?: string; name?: string; description?: string };
-type LinearProjectLike = { id: string; name: string; slugId?: string; url?: string };
+type LinearProjectLike = {
+  id: string;
+  name: string;
+  slugId?: string;
+  url?: string;
+  team?: MaybePromise<LinearTeamLike>;
+  teams?: MaybePromise<LinearConnection<LinearTeamLike>>;
+  teamIds?: string[];
+};
 type LinearIssueLike = {
   id: string;
   identifier: string;
@@ -232,6 +249,28 @@ export class LinearService {
       const projects = await this.client.projects({ filter: { slugId: { eq: slugId } }, first: 1 });
       const project = projects.nodes[0];
       return project === undefined ? undefined : this.toProjectReference(project, 'resolve_project');
+    });
+  }
+
+  async findProjects(input: FindLinearProjectInput): Promise<LinearProjectLookupResult[]> {
+    return this.wrap('find_project', async () => {
+      const filter: Record<string, unknown> = {};
+      const name = input.name?.trim();
+      const slugId = input.slugId?.trim();
+
+      if (name) {
+        filter.name = { containsIgnoreCase: name };
+      }
+
+      if (slugId) {
+        filter.slugId = { eq: slugId };
+      }
+
+      const projects = await this.client.projects({
+        ...(Object.keys(filter).length > 0 ? { filter } : {}),
+        first: 50
+      });
+      return Promise.all(projects.nodes.map(async (project) => this.toProjectLookupResult(project, 'find_project')));
     });
   }
 
@@ -445,6 +484,18 @@ export class LinearService {
       name: team.name,
       description: team.description
     };
+  }
+
+  private async toProjectLookupResult(project: LinearProjectLike, operation: string): Promise<LinearProjectLookupResult> {
+    return {
+      ...this.toProjectReference(project, operation),
+      teamId: await this.projectTeamId(project, operation)
+    };
+  }
+
+  private async projectTeamId(project: LinearProjectLike, operation: string): Promise<string> {
+    const teamId = project.teamIds?.[0] ?? (await project.team)?.id ?? (await project.teams)?.nodes[0]?.id;
+    return requireString(teamId, 'project.teamId', operation);
   }
 
   private async toIssueReference(issue: LinearIssueLike, operation: string): Promise<LinearIssueReference> {
