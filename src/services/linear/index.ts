@@ -123,7 +123,7 @@ export type LinearSdkClient = {
   createProject(input: Record<string, unknown>): Promise<LinearPayload<'project', LinearProjectLike>>;
   createIssue(input: Record<string, unknown>): Promise<LinearPayload<'issue', LinearIssueLike>>;
   createIssueBatch(input: Record<string, unknown>): Promise<LinearPayload<'issues', LinearIssueLike[]>>;
-  createIssueRelation(input: Record<string, unknown>): Promise<LinearPayload<'relation', LinearRelationLike>>;
+  createIssueRelation(input: Record<string, unknown>): Promise<LinearPayload<'issueRelation', LinearRelationLike>>;
   updateIssue(id: string, input: Record<string, unknown>): Promise<LinearPayload<'issue', LinearIssueLike>>;
   projects(variables?: Record<string, unknown>): Promise<LinearConnection<LinearProjectLike>>;
   teams(variables?: Record<string, unknown>): Promise<LinearConnection<LinearTeamLike>>;
@@ -427,7 +427,7 @@ export class LinearService {
         relatedIssueId: input.blockedIssueId,
         type: IssueRelationType.Blocks
       });
-      const relation = await requirePayloadEntity(payload.relation, 'relation', 'create_dependency');
+      const relation = await requirePayloadEntity(payload.issueRelation, 'issueRelation', 'create_dependency');
       return { id: relation.id, type: relation.type };
     });
   }

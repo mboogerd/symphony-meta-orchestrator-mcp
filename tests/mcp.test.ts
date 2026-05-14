@@ -329,7 +329,7 @@ function fakeLinearProjectClient(): LinearSdkClient {
       return { issues: [] };
     },
     async createIssueRelation() {
-      return { relation: { id: 'relation-1', type: 'blocks' } };
+      return { issueRelation: { id: 'relation-1', type: 'blocks' } };
     },
     async updateIssue() {
       return { issue: { id: 'issue-1', identifier: 'MRB-1', url: 'https://linear.example/MRB-1' } };
