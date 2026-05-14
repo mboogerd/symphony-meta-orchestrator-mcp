@@ -123,8 +123,7 @@ test('MCP integration creates planned issues for an unregistered Linear project'
     assert.equal(payload.batch.dependencies[0].dependency.type, 'blocks');
     assert.deepEqual(calls.map((call) => call.method), [
       'teams',
-      'teams',
-      'team.projects',
+      'project',
       'workflowStates',
       'createIssue',
       'workflowStates',
@@ -133,8 +132,8 @@ test('MCP integration creates planned issues for an unregistered Linear project'
       'issue',
       'createIssueRelation'
     ]);
-    assert.equal(calls[4].input.projectId, 'linear-project-id');
-    assert.deepEqual(calls[9].input, {
+    assert.equal(calls[3].input.projectId, 'linear-project-id');
+    assert.deepEqual(calls[8].input, {
       issueId: 'issue-1',
       relatedIssueId: 'issue-2',
       type: 'blocks'
@@ -254,9 +253,8 @@ test('MCP integration can set up a managed project from an existing Linear proje
     assert.equal(payload.status, 'ok');
     assert.equal(payload.setup.project.tracker.projectId, 'existing-project-id');
     assert.equal(payload.setup.project.tracker.projectSlug, 'existing-project-97e46de28c13');
-    assert.deepEqual(calls.map((call) => call.method), ['teams', 'teams', 'team.projects']);
-    assert.deepEqual(calls[1].input, { filter: { id: { eq: 'linear-team-id' } }, first: 1 });
-    assert.deepEqual(calls[2].input, { filter: { id: { eq: 'existing-project-id' } }, first: 1 });
+    assert.deepEqual(calls.map((call) => call.method), ['teams', 'project']);
+    assert.deepEqual(calls[1].input, { id: 'existing-project-id' });
   } finally {
     fixture.cleanup();
   }
@@ -404,7 +402,7 @@ test('MCP integration rejects an existing Linear project outside the resolved te
       'linearProject:error'
     ]);
     assert.equal(payload.setup.steps[0].error.code, 'project_not_found');
-    assert.deepEqual(calls.map((call) => call.method), ['teams', 'teams', 'team.projects']);
+    assert.deepEqual(calls.map((call) => call.method), ['teams', 'project']);
   } finally {
     fixture.cleanup();
   }
@@ -777,6 +775,28 @@ function mockLinearClient(calls: Array<{ method: string; input: Record<string, u
         team: { id: 'linear-team-id', key: 'MRB', name: 'MRB' },
         project: { id: 'linear-project-id', name: 'Meta Orchestrator' }
       };
+    },
+    async project(id) {
+      calls.push({ method: 'project', input: { id } });
+      if (id === 'existing-project-id') {
+        return {
+          id: 'existing-project-id',
+          name: 'Existing Project',
+          slugId: '97e46de28c13',
+          url: 'https://linear.example/project/existing-project-97e46de28c13',
+          team: { id: 'linear-team-id', key: 'MRB', name: 'MRB' }
+        };
+      }
+      if (id === 'linear-project-id') {
+        return {
+          id: 'linear-project-id',
+          name: 'Meta Orchestrator',
+          slugId: 'meta-orchestrator-slug',
+          url: 'https://linear.example/project/meta-orchestrator-slug',
+          team: { id: 'linear-team-id', key: 'MRB', name: 'MRB' }
+        };
+      }
+      return undefined;
     },
     async createProject(input) {
       calls.push({ method: 'createProject', input });
