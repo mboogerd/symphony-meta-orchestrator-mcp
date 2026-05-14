@@ -1,3 +1,4 @@
+import { mkdir } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import type { LinearProjectReference, LinearService, LinearTeamReference } from '../linear/index.ts';
 import type { ManagedProject, ProjectRegistryService } from '../registry/index.ts';
@@ -68,6 +69,7 @@ export async function setupManagedProject(input: SetupProjectInput, services: Se
   }
 
   try {
+    await mkdir(project.repo.path, { recursive: true });
     workflow = await writeProjectWorkflow(project);
     steps.push({ name: 'workflow', status: 'ok', output: { workflow } });
   } catch (error) {
@@ -112,8 +114,8 @@ function buildManagedProject(input: SetupProjectInput, team: LinearTeamReference
       cloneSource: repoPath
     },
     workflow: {
-      source: 'repo',
-      path: 'WORKFLOW.md'
+      source: 'generated',
+      template: 'default'
     },
     symphony: {
       command: 'mise',

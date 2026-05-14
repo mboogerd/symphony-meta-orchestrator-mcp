@@ -101,6 +101,7 @@ test('MCP integration sets up a managed project end-to-end with defaults', async
   const runnerCalls: string[] = [];
 
   try {
+    rmSync(fixture.repoPath, { recursive: true, force: true });
     const runtime = runtimeFor(fixture.configPath, {
       createLinearService: () => new LinearService({ client: mockLinearClient(calls) }),
       createRunnerManager: () => mockRunnerManager(runnerCalls)
@@ -129,7 +130,9 @@ test('MCP integration sets up a managed project end-to-end with defaults', async
     assert.equal(payload.setup.project.tracker.teamId, 'linear-team-id');
     assert.equal(payload.setup.project.tracker.projectId, 'project-id');
     assert.equal(payload.setup.project.tracker.projectSlug, 'project-slug');
+    assert.deepEqual(payload.setup.project.workflow, { source: 'generated', template: 'default' });
     assert.equal(payload.setup.workflow.workflowPath, join(fixture.workspacePath, 'WORKFLOW.md'));
+    assert.equal(existsSync(fixture.repoPath), true);
     assert.equal(payload.setup.runner.status.state, 'running');
     assert.deepEqual(calls.map((call) => call.method), ['teams', 'createProject']);
     assert.deepEqual(runnerCalls, ['start:dummy-project']);
@@ -214,6 +217,7 @@ test('MCP integration bootstraps missing workflow during project setup', async (
   const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
 
   try {
+    rmSync(fixture.repoPath, { recursive: true, force: true });
     const runtime = runtimeFor(fixture.configPath, {
       createLinearService: () => new LinearService({ client: mockLinearClient(calls) })
     });
@@ -241,6 +245,44 @@ test('MCP integration bootstraps missing workflow during project setup', async (
     ]);
     assert.equal(payload.setup.workflow.workflowPath, join(fixture.workspacePath, 'WORKFLOW.md'));
     assert.equal(existsSync(payload.setup.workflow.workflowPath), true);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('MCP integration returns partial setup details when repo directory cannot be created', async () => {
+  const fixture = createProjectFixture('mrb80-repo-file-', { writeWorkflow: false });
+  const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+
+  try {
+    rmSync(fixture.repoPath, { recursive: true, force: true });
+    writeFileSync(fixture.repoPath, 'not a directory');
+    const runtime = runtimeFor(fixture.configPath, {
+      createLinearService: () => new LinearService({ client: mockLinearClient(calls) })
+    });
+
+    const response = await callTool(runtime, 'setup-repo-file', 'setup_project', {
+      name: 'Repo File Project',
+      teamKey: 'MRB',
+      repoPath: fixture.repoPath,
+      runnerPort: fixture.project.symphony.runnerPort,
+      workspaceRoot: fixture.workspacePath,
+      logsRoot: fixture.logsPath
+    });
+
+    assertJsonRpcOk(response, 'setup-repo-file');
+    const result = response.result as Record<string, unknown>;
+    assert.equal(result.isError, true);
+    const payload = toolPayload(response);
+    assert.equal(payload.status, 'invalid');
+    assert.equal(payload.setup.project.id, 'repo-file-project');
+    assert.deepEqual(payload.setup.steps.map((step: { name: string; status: string }) => `${step.name}:${step.status}`), [
+      'linearProject:ok',
+      'registry:ok',
+      'workflow:error'
+    ]);
+    assert.equal(payload.setup.steps[2].error.name, 'Error');
+    assert.match(payload.setup.steps[2].error.message, /not a directory|EEXIST/);
   } finally {
     fixture.cleanup();
   }
