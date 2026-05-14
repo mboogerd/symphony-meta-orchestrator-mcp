@@ -14,6 +14,12 @@ export type LinearProjectReference = {
   url: string;
 };
 
+export type LinearTeamReference = {
+  id: string;
+  key: string;
+  name?: string;
+};
+
 export type LinearWorkflowStateReference = {
   id: string;
   name: string;
@@ -183,6 +189,17 @@ export class LinearService {
     });
   }
 
+  async resolveTeam(teamKey: string): Promise<LinearTeamReference> {
+    return this.wrap('resolve_team', async () => {
+      const team = await this.findTeam(teamKey);
+      return {
+        id: team.id,
+        key: requireString(team.key, 'team.key', 'resolve_team'),
+        name: team.name
+      };
+    });
+  }
+
   async createIssue(input: CreateLinearIssueInput): Promise<LinearIssueReference> {
     return this.wrap('create_issue', async () => {
       const teamId = input.teamId ?? await this.findTeamId(input.teamKey);
@@ -334,6 +351,10 @@ export class LinearService {
   }
 
   private async findTeamId(teamKey: string | undefined): Promise<string> {
+    return (await this.findTeam(teamKey)).id;
+  }
+
+  private async findTeam(teamKey: string | undefined): Promise<LinearTeamLike> {
     if (!teamKey) {
       throw new LinearServiceError('missing_team', 'resolve_team', 'teamId or teamKey is required');
     }
@@ -344,7 +365,7 @@ export class LinearService {
       throw new LinearServiceError('team_not_found', 'resolve_team', `Linear team "${teamKey}" was not found`, { teamKey });
     }
 
-    return team.id;
+    return team;
   }
 
   private async findStateId(teamId: string | undefined, stateName: string): Promise<string> {

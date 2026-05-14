@@ -1,6 +1,7 @@
 import type { RuntimeConfig } from '../config/runtime.ts';
 import { packageInfo } from '../package-info.ts';
 import { createLinearService, LinearServiceError, type LinearService } from '../services/linear/index.ts';
+import { setupManagedProject } from '../services/onboarding/index.ts';
 import { createProjectRegistryService, ProjectRegistryValidationError, type ManagedProject } from '../services/registry/index.ts';
 import { createRunnerManager, type RunnerManager } from '../services/runner/index.ts';
 import { validateProjectWorkflowSetups, WorkflowSetupValidationError, writeProjectWorkflow, type PortAvailabilityProbe, type WorkflowSetupValidationPhase } from '../services/workflow/index.ts';
@@ -102,6 +103,7 @@ export async function handleMcpMessage(message: unknown, runtime: McpRuntimeConf
             description: stringSchema(),
             leadId: stringSchema()
           }, ['name']),
+          tool('setup_project', 'Set up a new managed project end-to-end: create Linear project, register defaults, generate workflow, and optionally start the runner.', setupProjectSchema(), ['name', 'teamKey', 'repoPath', 'runnerPort', 'workspaceRoot', 'logsRoot']),
           tool('create_issue', 'Create one Linear issue.', linearIssueSchema(), ['title']),
           tool('create_issue_batch', 'Create multiple Linear issues.', {
             issues: { type: 'array', items: { type: 'object', properties: linearIssueSchema() } }
@@ -218,6 +220,15 @@ async function handleToolCall(message: JsonRpcRequest, runtime: McpRuntimeConfig
 
     if (name === 'create_linear_project') {
       return toolResult(message.id ?? null, { project: await linear(runtime).createProject(argumentsValue as never) });
+    }
+
+    if (name === 'setup_project') {
+      const setup = await setupManagedProject(readSetupProjectInput(argumentsValue), {
+        linear: linear(runtime),
+        registry,
+        runnerManager: runnerManager(runtime)
+      });
+      return toolResult(message.id ?? null, { setup }, setup.steps.some((step) => step.status === 'error'));
     }
 
     if (name === 'create_issue') {
@@ -476,6 +487,35 @@ function projectIssueSchema(): Record<string, unknown> {
     assigneeId: stringSchema(),
     priority: { type: 'integer', minimum: 0, maximum: 4 },
     labelIds: { type: 'array', items: stringSchema() }
+  };
+}
+
+function setupProjectSchema(): Record<string, unknown> {
+  return {
+    name: stringSchema(),
+    teamKey: stringSchema(),
+    repoPath: stringSchema(),
+    runnerPort: { type: 'integer', minimum: 1, maximum: 65535 },
+    workspaceRoot: stringSchema(),
+    logsRoot: stringSchema(),
+    startRunner: { type: 'boolean' }
+  };
+}
+
+function readSetupProjectInput(value: Record<string, unknown>) {
+  const runnerPort = value.runnerPort;
+  if (typeof runnerPort !== 'number' || !Number.isInteger(runnerPort) || runnerPort < 1 || runnerPort > 65535) {
+    throw new McpToolError('invalid_input', 'runnerPort must be an integer between 1 and 65535', { field: 'runnerPort' });
+  }
+
+  return {
+    name: requiredString(value.name, 'name'),
+    teamKey: requiredString(value.teamKey, 'teamKey'),
+    repoPath: requiredString(value.repoPath, 'repoPath'),
+    runnerPort,
+    workspaceRoot: requiredString(value.workspaceRoot, 'workspaceRoot'),
+    logsRoot: requiredString(value.logsRoot, 'logsRoot'),
+    startRunner: value.startRunner === true
   };
 }
 

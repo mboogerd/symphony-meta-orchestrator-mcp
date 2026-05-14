@@ -38,6 +38,7 @@ test('MCP tools/list exposes control-plane tools', async () => {
     'validate_project',
     'generate_workflow',
     'create_linear_project',
+    'setup_project',
     'create_issue',
     'create_issue_batch',
     'link_issue_dependency',

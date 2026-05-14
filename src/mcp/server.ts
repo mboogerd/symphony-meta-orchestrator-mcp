@@ -10,6 +10,7 @@ import {
   type ManagedProject,
   ProjectRegistryValidationError
 } from '../services/registry/index.ts';
+import { setupManagedProject } from '../services/onboarding/index.ts';
 import { createRunnerManager, type RunnerManager } from '../services/runner/index.ts';
 import {
   type PortAvailabilityProbe,
@@ -21,6 +22,7 @@ import {
 
 const optionalString = z.string().trim().min(1).optional();
 const requiredString = z.string().trim().min(1);
+const runnerPort = z.number().int().min(1).max(65535);
 const linearIssueSchema = {
   title: requiredString,
   teamId: optionalString,
@@ -136,6 +138,26 @@ function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void
       leadId: optionalString
     }
   }, async (args) => withToolErrors(async () => toolResult({ project: await linear(runtime).createProject(args) })));
+
+  server.registerTool('setup_project', {
+    description: 'Set up a new managed project end-to-end: create Linear project, register defaults, generate workflow, and optionally start the runner.',
+    inputSchema: {
+      name: requiredString,
+      teamKey: requiredString,
+      repoPath: requiredString,
+      runnerPort,
+      workspaceRoot: requiredString,
+      logsRoot: requiredString,
+      startRunner: z.boolean().optional()
+    }
+  }, async (args) => withToolErrors(async () => {
+    const setup = await setupManagedProject(args, {
+      linear: linear(runtime),
+      registry: registry(runtime),
+      runnerManager: runnerManager(runtime)
+    });
+    return toolResult({ setup }, setup.steps.some((step) => step.status === 'error'));
+  }));
 
   server.registerTool('create_issue', {
     description: 'Create one Linear issue.',
