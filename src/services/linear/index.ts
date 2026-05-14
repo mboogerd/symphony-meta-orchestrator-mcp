@@ -97,6 +97,8 @@ export type LinearServiceOptions = {
   client?: LinearSdkClient;
 };
 
+type MaybePromise<T> = T | Promise<T>;
+
 export type LinearSdkClient = {
   issue(id: string): Promise<LinearIssueLike | undefined>;
   createProject(input: Record<string, unknown>): Promise<LinearPayload<'project', LinearProjectLike>>;
@@ -109,7 +111,7 @@ export type LinearSdkClient = {
   workflowStates(variables?: Record<string, unknown>): Promise<LinearConnection<LinearWorkflowStateLike>>;
 };
 
-type LinearPayload<Key extends string, Value> = { success?: boolean } & { [K in Key]?: Value };
+type LinearPayload<Key extends string, Value> = { success?: boolean } & { [K in Key]?: MaybePromise<Value> };
 type LinearConnection<Node> = { nodes: Node[] };
 type LinearTeamLike = { id: string; key?: string; name?: string };
 type LinearProjectLike = { id: string; name: string; slugId?: string; url?: string };
@@ -175,7 +177,7 @@ export class LinearService {
         leadId: input.leadId,
         teamIds
       });
-      const project = requireEntity(payload.project, 'project', 'create_project');
+      const project = await requirePayloadEntity(payload.project, 'project', 'create_project');
       return this.toProjectReference(await this.hydrateProjectReference(project, 'create_project'), 'create_project');
     });
   }
@@ -194,7 +196,7 @@ export class LinearService {
         priority: input.priority,
         labelIds: input.labelIds
       });
-      return toIssueReference(requireEntity(payload.issue, 'issue', 'create_issue'));
+      return toIssueReference(await requirePayloadEntity(payload.issue, 'issue', 'create_issue'));
     });
   }
 
@@ -223,7 +225,8 @@ export class LinearService {
         };
       }));
       const payload = await this.client.createIssueBatch({ issues });
-      return requireEntity(payload.issues, 'issues', 'create_issue_batch').map(toIssueReference);
+      const createdIssues = await requirePayloadEntity(payload.issues, 'issues', 'create_issue_batch');
+      return Promise.all(createdIssues.map(async (issue) => toIssueReference(await issue)));
     });
   }
 
@@ -312,7 +315,7 @@ export class LinearService {
     return this.wrap('move_issue_state', async () => {
       const stateId = isUuidLike(stateNameOrId) ? stateNameOrId : await this.findStateId(teamId, stateNameOrId);
       const payload = await this.client.updateIssue(issueId, { stateId });
-      return toIssueReference(requireEntity(payload.issue, 'issue', 'move_issue_state'));
+      return toIssueReference(await requirePayloadEntity(payload.issue, 'issue', 'move_issue_state'));
     });
   }
 
@@ -323,7 +326,7 @@ export class LinearService {
         relatedIssueId: input.blockedIssueId,
         type: IssueRelationType.Blocks
       });
-      const relation = requireEntity(payload.relation, 'relation', 'create_dependency');
+      const relation = await requirePayloadEntity(payload.relation, 'relation', 'create_dependency');
       return { id: relation.id, type: relation.type };
     });
   }
@@ -438,6 +441,10 @@ function requireEntity<T>(entity: T | undefined, path: string, operation: string
   }
 
   return entity;
+}
+
+async function requirePayloadEntity<T>(entity: MaybePromise<T | undefined> | undefined, path: string, operation: string): Promise<T> {
+  return requireEntity(await entity, path, operation);
 }
 
 function requireString(value: unknown, path: string, operation: string): string {
