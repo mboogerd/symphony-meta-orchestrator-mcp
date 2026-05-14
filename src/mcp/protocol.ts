@@ -104,6 +104,10 @@ export async function handleMcpMessage(message: unknown, runtime: McpRuntimeConf
             leadId: stringSchema()
           }, ['name']),
           tool('list_teams', 'List Linear teams accessible to the configured API key.', {}),
+          tool('find_linear_project', 'Find existing Linear projects by name substring and/or slug ID.', {
+            name: stringSchema(),
+            slugId: stringSchema()
+          }),
           tool('setup_project', 'Set up a new managed project end-to-end: create Linear project, register defaults, generate workflow, and optionally start the runner.', setupProjectSchema(), ['name', 'teamKey', 'repoPath', 'runnerPort', 'workspaceRoot', 'logsRoot']),
           tool('create_issue', 'Create one Linear issue.', linearIssueSchema(), ['title']),
           tool('create_issue_batch', 'Create multiple Linear issues.', {
@@ -225,6 +229,15 @@ async function handleToolCall(message: JsonRpcRequest, runtime: McpRuntimeConfig
 
     if (name === 'list_teams') {
       return toolResult(message.id ?? null, { teams: await linear(runtime).listTeams() });
+    }
+
+    if (name === 'find_linear_project') {
+      return toolResult(message.id ?? null, {
+        projects: await linear(runtime).findProjects({
+          name: optionalString(argumentsValue.name),
+          slugId: optionalString(argumentsValue.slugId)
+        })
+      });
     }
 
     if (name === 'setup_project') {

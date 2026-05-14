@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { createRuntimeConfig, handleMcpMessage } from '../src/index.ts';
+import { createLinearService, type LinearSdkClient } from '../src/services/linear/index.ts';
 import { managedProject, managedProjectYaml } from './project-fixtures.ts';
 
 test('MCP initialize returns no-op server capabilities', async () => {
@@ -39,6 +40,7 @@ test('MCP tools/list exposes control-plane tools', async () => {
     'generate_workflow',
     'create_linear_project',
     'list_teams',
+    'find_linear_project',
     'setup_project',
     'create_issue',
     'create_issue_batch',
@@ -80,6 +82,33 @@ test('MCP list_teams returns accessible Linear teams', async () => {
     status: 'ok',
     teams: [{ id: 'team-1', key: 'MRB', name: 'Mrboo', description: 'Main team' }]
   });
+});
+
+test('MCP find_linear_project returns matching Linear projects', async () => {
+  const runtime = createRuntimeConfig({ env: {}, argv: [], cwd: process.cwd() });
+  const response = await handleMcpMessage({
+    jsonrpc: '2.0',
+    id: 'find-project',
+    method: 'tools/call',
+    params: { name: 'find_linear_project', arguments: { name: 'meta', slugId: 'meta-123' } }
+  }, {
+    ...runtime,
+    mcpServices: {
+      createLinearService: () => createLinearService({
+        client: fakeLinearProjectClient()
+      })
+    }
+  });
+
+  const structured = ((response?.result as Record<string, unknown>).structuredContent as Record<string, any>);
+  assert.equal(structured.status, 'ok');
+  assert.deepEqual(structured.projects, [{
+    id: 'project-1',
+    name: 'Meta Orchestrator',
+    slugId: 'meta-123',
+    url: 'https://linear.example/project/meta-123',
+    teamId: 'team-1'
+  }]);
 });
 
 test('MCP resources/list exposes managed projects from YAML registry', async () => {
@@ -242,3 +271,43 @@ test('MCP Linear tools return structured missing auth errors', async () => {
   assert.equal(structured.status, 'error');
   assert.equal(structured.error.code, 'missing_api_key');
 });
+
+function fakeLinearProjectClient(): LinearSdkClient {
+  return {
+    async issue(id) {
+      return { id, identifier: 'MRB-1', url: 'https://linear.example/MRB-1' };
+    },
+    async createProject() {
+      return { project: { id: 'project-1', name: 'Meta Orchestrator', slugId: 'meta-123', url: 'https://linear.example/project/meta-123' } };
+    },
+    async createIssue() {
+      return { issue: { id: 'issue-1', identifier: 'MRB-1', url: 'https://linear.example/MRB-1' } };
+    },
+    async createIssueBatch() {
+      return { issues: [] };
+    },
+    async createIssueRelation() {
+      return { relation: { id: 'relation-1', type: 'blocks' } };
+    },
+    async updateIssue() {
+      return { issue: { id: 'issue-1', identifier: 'MRB-1', url: 'https://linear.example/MRB-1' } };
+    },
+    async projects() {
+      return {
+        nodes: [{
+          id: 'project-1',
+          name: 'Meta Orchestrator',
+          slugId: 'meta-123',
+          url: 'https://linear.example/project/meta-123',
+          team: { id: 'team-1', key: 'MRB' }
+        }]
+      };
+    },
+    async teams() {
+      return { nodes: [{ id: 'team-1', key: 'MRB' }] };
+    },
+    async workflowStates() {
+      return { nodes: [{ id: 'state-1', name: 'Backlog' }] };
+    }
+  };
+}

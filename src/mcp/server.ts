@@ -143,6 +143,14 @@ function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void
     description: 'List Linear teams accessible to the configured API key.'
   }, async () => withToolErrors(async () => toolResult({ teams: await linear(runtime).listTeams() })));
 
+  server.registerTool('find_linear_project', {
+    description: 'Find existing Linear projects by name substring and/or slug ID.',
+    inputSchema: {
+      name: optionalString,
+      slugId: optionalString
+    }
+  }, async (args) => withToolErrors(async () => toolResult({ projects: await linear(runtime).findProjects(args) })));
+
   server.registerTool('setup_project', {
     description: 'Set up a new managed project end-to-end: create Linear project, register defaults, generate workflow, and optionally start the runner.',
     inputSchema: {
