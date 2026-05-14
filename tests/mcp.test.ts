@@ -49,6 +49,7 @@ test('MCP tools/list exposes control-plane tools', async () => {
     'move_issue_state',
     'create_project_issue',
     'create_planned_issue_batch',
+    'create_linear_project_planned_issue_batch',
     'promote_ready_issue',
     'link_project_issue_dependency',
     'start_runner',

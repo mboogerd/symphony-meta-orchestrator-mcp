@@ -96,6 +96,54 @@ test('MCP integration creates planned Backlog issues and Linear dependencies wit
   }
 });
 
+test('MCP integration creates planned issues for an unregistered Linear project', async () => {
+  const fixture = createProjectFixture('mrb104-linear-');
+  const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+  const client = mockLinearClient(calls);
+
+  try {
+    const runtime = runtimeFor(fixture.configPath, {
+      createLinearService: () => new LinearService({ client })
+    });
+
+    const response = await callTool(runtime, 'raw-planned', 'create_linear_project_planned_issue_batch', {
+      teamKey: 'MRB',
+      linearProjectId: 'linear-project-id',
+      issues: [
+        { key: 'setup', title: 'Set up control plane' },
+        { key: 'tests', title: 'Add integration tests' }
+      ],
+      dependencies: [{ from: 'setup', blocks: 'tests' }]
+    });
+
+    assertJsonRpcOk(response, 'raw-planned');
+    const payload = toolPayload(response);
+    assert.equal(payload.status, 'ok');
+    assert.deepEqual(payload.batch.issues.map((issue: { key: string }) => issue.key), ['setup', 'tests']);
+    assert.equal(payload.batch.dependencies[0].dependency.type, 'blocks');
+    assert.deepEqual(calls.map((call) => call.method), [
+      'teams',
+      'teams',
+      'team.projects',
+      'workflowStates',
+      'createIssue',
+      'workflowStates',
+      'createIssue',
+      'issue',
+      'issue',
+      'createIssueRelation'
+    ]);
+    assert.equal(calls[4].input.projectId, 'linear-project-id');
+    assert.deepEqual(calls[9].input, {
+      issueId: 'issue-1',
+      relatedIssueId: 'issue-2',
+      type: 'blocks'
+    });
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test('MCP integration sets up a managed project end-to-end with defaults', async () => {
   const fixture = createProjectFixture('mrb71-setup-');
   const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
@@ -697,6 +745,16 @@ function mockLinearClient(calls: Array<{ method: string; input: Record<string, u
                   name: 'Existing Project',
                   slugId: '97e46de28c13',
                   url: 'https://linear.example/project/existing-project-97e46de28c13'
+                }]
+              };
+            }
+            if (projectsInput?.filter?.id?.eq === 'linear-project-id') {
+              return {
+                nodes: [{
+                  id: 'linear-project-id',
+                  name: 'Meta Orchestrator',
+                  slugId: 'meta-orchestrator-slug',
+                  url: 'https://linear.example/project/meta-orchestrator-slug'
                 }]
               };
             }

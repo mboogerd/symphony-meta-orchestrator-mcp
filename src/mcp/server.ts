@@ -221,6 +221,19 @@ function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void
     batch: await linear(runtime).createPlannedIssueBatch(await requireProject(runtime, projectId), { issues, dependencies })
   })));
 
+  server.registerTool('create_linear_project_planned_issue_batch', {
+    description: 'Create multiple planned issues in a Linear project by raw team/project IDs and link dependencies by stable client keys.',
+    inputSchema: {
+      teamId: optionalString,
+      teamKey: optionalString,
+      linearProjectId: requiredString,
+      issues: z.array(z.object({ key: requiredString, ...projectIssueSchema }).strict()),
+      dependencies: z.array(z.object({ from: requiredString, blocks: requiredString }).strict()).optional()
+    }
+  }, async ({ teamId, teamKey, linearProjectId, issues, dependencies }) => withToolErrors(async () => toolResult({
+    batch: await linear(runtime).createLinearProjectPlannedIssueBatch({ teamId, teamKey, linearProjectId, issues, dependencies })
+  })));
+
   server.registerTool('promote_ready_issue', {
     description: 'Explicitly move a managed-project issue from Backlog to Todo.',
     inputSchema: { projectId: requiredString, issueId: requiredString }

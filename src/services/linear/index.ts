@@ -84,6 +84,12 @@ export type CreatePlannedIssueBatchInput = {
   dependencies?: PlannedIssueDependencyInput[];
 };
 
+export type CreateLinearProjectPlannedIssueBatchInput = CreatePlannedIssueBatchInput & {
+  teamId?: string;
+  teamKey?: string;
+  linearProjectId: string;
+};
+
 export type PlannedIssueResult = {
   key: string;
   issue: LinearIssueReference;
@@ -375,6 +381,28 @@ export class LinearService {
   }
 
   async createPlannedIssueBatch(project: ManagedProject, input: CreatePlannedIssueBatchInput): Promise<PlannedIssueBatchResult> {
+    return this.createPlannedIssueBatchForScope({
+      operation: 'create_planned_issue_batch',
+      teamId: project.tracker.teamId,
+      projectId: project.tracker.projectId
+    }, input, true);
+  }
+
+  async createLinearProjectPlannedIssueBatch(input: CreateLinearProjectPlannedIssueBatchInput): Promise<PlannedIssueBatchResult> {
+    const teamId = input.teamId ?? await this.findTeamId(input.teamKey);
+    await this.resolveProjectForTeam(input.linearProjectId, teamId);
+    return this.createPlannedIssueBatchForScope({
+      operation: 'create_linear_project_planned_issue_batch',
+      teamId,
+      projectId: input.linearProjectId
+    }, input, false);
+  }
+
+  private async createPlannedIssueBatchForScope(
+    scope: { operation: string; teamId: string; projectId: string },
+    input: CreatePlannedIssueBatchInput,
+    managedProjectDependencyValidation: boolean
+  ): Promise<PlannedIssueBatchResult> {
     const issues: PlannedIssueResult[] = [];
     const dependencies: PlannedIssueDependencyResult[] = [];
     const issueIdsByKey = new Map<string, string>();
@@ -383,22 +411,26 @@ export class LinearService {
       if (issueIdsByKey.has(issue.key)) {
         throw partialBatchError('issue', issues, dependencies, new LinearServiceError(
           'duplicate_issue_key',
-          'create_planned_issue_batch',
+          scope.operation,
           `Duplicate issue key "${issue.key}"`,
           { key: issue.key }
-        ), undefined, issue.key);
+        ), scope.operation, undefined, issue.key);
       }
 
       try {
-        const created = await this.createProjectIssue(project, issue);
+        const created = await this.createIssue({
+          ...issue,
+          teamId: scope.teamId,
+          projectId: scope.projectId
+        });
         if (!created.id) {
-          throw new LinearServiceError('missing_issue_id', 'create_planned_issue_batch', `Created issue for key "${issue.key}" did not include an id`, { key: issue.key });
+          throw new LinearServiceError('missing_issue_id', scope.operation, `Created issue for key "${issue.key}" did not include an id`, { key: issue.key });
         }
 
         issueIdsByKey.set(issue.key, created.id);
         issues.push({ key: issue.key, issue: created });
       } catch (error) {
-        throw partialBatchError('issue', issues, dependencies, error, undefined, issue.key);
+        throw partialBatchError('issue', issues, dependencies, error, scope.operation, undefined, issue.key);
       }
     }
 
@@ -410,17 +442,19 @@ export class LinearService {
         const missingKeys = [!blockingIssueId ? edge.from : undefined, !blockedIssueId ? edge.blocks : undefined].filter((key): key is string => key !== undefined);
         throw partialBatchError('dependency', issues, dependencies, new LinearServiceError(
           'invalid_dependency_key',
-          'create_planned_issue_batch',
+          scope.operation,
           `Dependency references unknown issue key(s): ${missingKeys.join(', ')}`,
           { edge, missingKeys }
-        ), edge);
+        ), scope.operation, edge);
       }
 
       try {
-        const dependency = await this.linkProjectIssueDependency(project, { blockingIssueId, blockedIssueId });
+        const dependency = managedProjectDependencyValidation
+          ? await this.linkScopedIssueDependency(scope, { blockingIssueId, blockedIssueId }, 'link_project_issue_dependency')
+          : await this.linkScopedIssueDependency(scope, { blockingIssueId, blockedIssueId }, 'link_linear_project_issue_dependency');
         dependencies.push({ ...edge, dependency });
       } catch (error) {
-        throw partialBatchError('dependency', issues, dependencies, error, edge);
+        throw partialBatchError('dependency', issues, dependencies, error, scope.operation, edge);
       }
     }
 
@@ -433,17 +467,29 @@ export class LinearService {
   }
 
   async linkProjectIssueDependency(project: ManagedProject, input: CreateLinearDependencyInput): Promise<{ id: string; type: string }> {
+    return this.linkScopedIssueDependency({
+      operation: 'link_project_issue_dependency',
+      teamId: project.tracker.teamId,
+      projectId: project.tracker.projectId
+    }, input, 'link_project_issue_dependency');
+  }
+
+  private async linkScopedIssueDependency(
+    scope: { teamId: string; projectId: string },
+    input: CreateLinearDependencyInput,
+    operation: string
+  ): Promise<{ id: string; type: string }> {
     if (input.blockingIssueId === input.blockedIssueId) {
       throw new LinearServiceError(
         'invalid_dependency_direction',
-        'link_project_issue_dependency',
-        'Dependency direction must reference two distinct managed project issues',
+        operation,
+        'Dependency direction must reference two distinct project issues',
         { blockingIssueId: input.blockingIssueId, blockedIssueId: input.blockedIssueId }
       );
     }
 
-    await this.assertManagedProjectIssue(project, input.blockingIssueId, 'link_project_issue_dependency', 'blockingIssueId');
-    await this.assertManagedProjectIssue(project, input.blockedIssueId, 'link_project_issue_dependency', 'blockedIssueId');
+    await this.assertScopedProjectIssue(scope, input.blockingIssueId, operation, 'blockingIssueId');
+    await this.assertScopedProjectIssue(scope, input.blockedIssueId, operation, 'blockedIssueId');
     return this.createDependency(input);
   }
 
@@ -501,28 +547,41 @@ export class LinearService {
   }
 
   private async assertManagedProjectIssue(project: ManagedProject, issueId: string, operation: string, role = 'issueId'): Promise<void> {
+    return this.assertScopedProjectIssue({
+      teamId: project.tracker.teamId,
+      projectId: project.tracker.projectId
+    }, issueId, operation, role);
+  }
+
+  private async assertScopedProjectIssue(scope: { teamId: string; projectId: string }, issueId: string, operation: string, role = 'issueId'): Promise<void> {
     const issue = await this.client.issue(issueId);
     if (!issue) {
       throw new LinearServiceError('missing_issue', operation, `Linear issue "${issueId}" was not found`, { issueId, role });
     }
 
     const team = await issue.team;
-    if (!team || team.id !== project.tracker.teamId) {
+    if (!team || team.id !== scope.teamId) {
+      const expectedScope = operation === 'link_project_issue_dependency' || operation === 'promote_ready_issue'
+        ? 'managed'
+        : 'expected';
       throw new LinearServiceError(
         'wrong_team',
         operation,
-        `Linear issue "${issueId}" is not in the managed team`,
-        { issueId, role, expectedTeamId: project.tracker.teamId, actualTeamId: team?.id }
+        `Linear issue "${issueId}" is not in the ${expectedScope} team`,
+        { issueId, role, expectedTeamId: scope.teamId, actualTeamId: team?.id }
       );
     }
 
     const issueProject = await issue.project;
-    if (!issueProject || issueProject.id !== project.tracker.projectId) {
+    if (!issueProject || issueProject.id !== scope.projectId) {
+      const expectedScope = operation === 'link_project_issue_dependency' || operation === 'promote_ready_issue'
+        ? 'managed'
+        : 'expected';
       throw new LinearServiceError(
         'wrong_project',
         operation,
-        `Linear issue "${issueId}" is not in the managed project`,
-        { issueId, role, expectedProjectId: project.tracker.projectId, actualProjectId: issueProject?.id }
+        `Linear issue "${issueId}" is not in the ${expectedScope} project`,
+        { issueId, role, expectedProjectId: scope.projectId, actualProjectId: issueProject?.id }
       );
     }
   }
@@ -641,6 +700,7 @@ function partialBatchError(
   issues: PlannedIssueResult[],
   dependencies: PlannedIssueDependencyResult[],
   error: unknown,
+  operation: string,
   edge?: PlannedIssueDependencyInput,
   key?: string
 ): LinearServiceError {
@@ -650,7 +710,7 @@ function partialBatchError(
 
   return new LinearServiceError(
     'planned_issue_batch_partial_failure',
-    'create_planned_issue_batch',
+    operation,
     `Failed to create planned issue batch during ${phase} creation`,
     {
       partial: {
