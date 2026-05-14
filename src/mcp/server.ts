@@ -152,7 +152,7 @@ function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void
   }, async (args) => withToolErrors(async () => toolResult({ projects: await linear(runtime).findProjects(args) })));
 
   server.registerTool('setup_project', {
-    description: 'Set up a new managed project end-to-end: create Linear project, register defaults, generate workflow, and optionally start the runner.',
+    description: 'Set up a new managed project end-to-end: create or attach a Linear project, register defaults, generate workflow, and optionally start the runner.',
     inputSchema: {
       name: requiredString,
       teamKey: requiredString,
@@ -160,6 +160,7 @@ function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void
       runnerPort,
       workspaceRoot: requiredString,
       logsRoot: requiredString,
+      linearProjectId: optionalString,
       startRunner: z.boolean().optional()
     }
   }, async (args) => withToolErrors(async () => {

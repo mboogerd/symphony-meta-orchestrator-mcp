@@ -138,7 +138,78 @@ test('MCP integration sets up a managed project end-to-end with defaults', async
   }
 });
 
-test('MCP integration sets up a managed project when a brand-new repo has no workflow file', async () => {
+test('MCP integration can set up a managed project from an existing Linear project', async () => {
+  const fixture = createProjectFixture('mrb75-existing-');
+  const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+
+  try {
+    const runtime = runtimeFor(fixture.configPath, {
+      createLinearService: () => new LinearService({ client: mockLinearClient(calls) })
+    });
+
+    const response = await callTool(runtime, 'setup-existing', 'setup_project', {
+      name: 'Existing Project',
+      teamKey: 'MRB',
+      linearProjectId: 'existing-project-id',
+      repoPath: fixture.repoPath,
+      runnerPort: fixture.project.symphony.runnerPort,
+      workspaceRoot: fixture.workspacePath,
+      logsRoot: fixture.logsPath
+    });
+
+    assertJsonRpcOk(response, 'setup-existing');
+    const payload = toolPayload(response);
+    assert.equal(payload.status, 'ok');
+    assert.equal(payload.setup.project.tracker.projectId, 'existing-project-id');
+    assert.equal(payload.setup.project.tracker.projectSlug, 'existing-project-slug');
+    assert.deepEqual(calls.map((call) => call.method), ['teams', 'projects']);
+    assert.deepEqual(calls[1].input, {
+      filter: {
+        id: { eq: 'existing-project-id' },
+        teams: { id: { eq: 'linear-team-id' } }
+      },
+      first: 1
+    });
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('MCP integration rejects an existing Linear project outside the resolved team', async () => {
+  const fixture = createProjectFixture('mrb75-wrong-team-');
+  const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+
+  try {
+    const runtime = runtimeFor(fixture.configPath, {
+      createLinearService: () => new LinearService({ client: mockLinearClient(calls) })
+    });
+
+    const response = await callTool(runtime, 'setup-wrong-team', 'setup_project', {
+      name: 'Wrong Team Project',
+      teamKey: 'MRB',
+      linearProjectId: 'wrong-team-project-id',
+      repoPath: fixture.repoPath,
+      runnerPort: fixture.project.symphony.runnerPort,
+      workspaceRoot: fixture.workspacePath,
+      logsRoot: fixture.logsPath
+    });
+
+    assertJsonRpcOk(response, 'setup-wrong-team');
+    const result = response.result as Record<string, unknown>;
+    assert.equal(result.isError, true);
+    const payload = toolPayload(response);
+    assert.equal(payload.status, 'invalid');
+    assert.deepEqual(payload.setup.steps.map((step: { name: string; status: string }) => `${step.name}:${step.status}`), [
+      'linearProject:error'
+    ]);
+    assert.equal(payload.setup.steps[0].error.code, 'project_not_found');
+    assert.deepEqual(calls.map((call) => call.method), ['teams', 'projects']);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('MCP integration returns partial setup details when workflow generation fails', async () => {
   const fixture = createProjectFixture('mrb71-partial-', { writeWorkflow: false });
   const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
 
@@ -157,20 +228,17 @@ test('MCP integration sets up a managed project when a brand-new repo has no wor
     });
 
     assertJsonRpcOk(response, 'setup');
+    const result = response.result as Record<string, unknown>;
+    assert.equal(result.isError, true);
     const payload = toolPayload(response);
-    assert.equal(payload.status, 'ok');
+    assert.equal(payload.status, 'invalid');
     assert.equal(payload.setup.project.id, 'partial-project');
-    assert.deepEqual(payload.setup.project.workflow, {
-      source: 'generated',
-      template: 'default'
-    });
     assert.deepEqual(payload.setup.steps.map((step: { name: string; status: string }) => `${step.name}:${step.status}`), [
       'linearProject:ok',
       'registry:ok',
-      'workflow:ok',
-      'runner:skipped'
+      'workflow:error'
     ]);
-    assert.equal(payload.setup.workflow.workflowPath, join(fixture.workspacePath, 'WORKFLOW.md'));
+    assert.equal(payload.setup.steps[2].error.name, 'WorkflowSetupValidationError');
   } finally {
     fixture.cleanup();
   }
@@ -401,6 +469,16 @@ function mockLinearClient(calls: Array<{ method: string; input: Record<string, u
     },
     async projects(input) {
       calls.push({ method: 'projects', input: input ?? {} });
+      if (input?.filter?.id?.eq === 'existing-project-id' && input?.filter?.teams?.id?.eq === 'linear-team-id') {
+        return {
+          nodes: [{
+            id: 'existing-project-id',
+            name: 'Existing Project',
+            slugId: 'existing-project-slug',
+            url: 'https://linear.example/existing-project'
+          }]
+        };
+      }
       return { nodes: [] };
     },
     async teams(input) {

@@ -108,7 +108,7 @@ export async function handleMcpMessage(message: unknown, runtime: McpRuntimeConf
             name: stringSchema(),
             slugId: stringSchema()
           }),
-          tool('setup_project', 'Set up a new managed project end-to-end: create Linear project, register defaults, generate workflow, and optionally start the runner.', setupProjectSchema(), ['name', 'teamKey', 'repoPath', 'runnerPort', 'workspaceRoot', 'logsRoot']),
+          tool('setup_project', 'Set up a new managed project end-to-end: create or attach a Linear project, register defaults, generate workflow, and optionally start the runner.', setupProjectSchema(), ['name', 'teamKey', 'repoPath', 'runnerPort', 'workspaceRoot', 'logsRoot']),
           tool('create_issue', 'Create one Linear issue.', linearIssueSchema(), ['title']),
           tool('create_issue_batch', 'Create multiple Linear issues.', {
             issues: { type: 'array', items: { type: 'object', properties: linearIssueSchema() } }
@@ -516,6 +516,7 @@ function setupProjectSchema(): Record<string, unknown> {
     runnerPort: { type: 'integer', minimum: 1, maximum: 65535 },
     workspaceRoot: stringSchema(),
     logsRoot: stringSchema(),
+    linearProjectId: stringSchema(),
     startRunner: { type: 'boolean' }
   };
 }
@@ -533,6 +534,7 @@ function readSetupProjectInput(value: Record<string, unknown>) {
     runnerPort,
     workspaceRoot: requiredString(value.workspaceRoot, 'workspaceRoot'),
     logsRoot: requiredString(value.logsRoot, 'logsRoot'),
+    linearProjectId: optionalString(value.linearProjectId),
     startRunner: value.startRunner === true
   };
 }

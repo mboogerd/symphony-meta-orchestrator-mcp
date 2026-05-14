@@ -12,6 +12,7 @@ export type SetupProjectInput = {
   workspaceRoot: string;
   logsRoot: string;
   startRunner?: boolean;
+  linearProjectId?: string;
 };
 
 export type SetupProjectStepName = 'linearProject' | 'registry' | 'workflow' | 'runner';
@@ -48,7 +49,9 @@ export async function setupManagedProject(input: SetupProjectInput, services: Se
 
   try {
     team = await services.linear.resolveTeam(input.teamKey);
-    linearProject = await services.linear.createProject({ name: input.name, teamId: team.id });
+    linearProject = input.linearProjectId
+      ? await services.linear.resolveProjectForTeam(input.linearProjectId, team.id)
+      : await services.linear.createProject({ name: input.name, teamId: team.id });
     steps.push({ name: 'linearProject', status: 'ok', output: { team, project: linearProject } });
   } catch (error) {
     steps.push({ name: 'linearProject', status: 'error', error: structuredError(error) });
@@ -109,8 +112,8 @@ function buildManagedProject(input: SetupProjectInput, team: LinearTeamReference
       cloneSource: repoPath
     },
     workflow: {
-      source: 'generated',
-      template: 'default'
+      source: 'repo',
+      path: 'WORKFLOW.md'
     },
     symphony: {
       command: 'mise',
