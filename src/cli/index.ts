@@ -119,14 +119,6 @@ export async function runCli(
       }
 
       const manager = createRunnerManager();
-      if (command === 'runner:start') {
-        stdout.write(`${JSON.stringify({ status: 'ok', runner: await manager.start(project) }, null, 2)}\n`);
-        return 0;
-      }
-      if (command === 'runner:stop') {
-        stdout.write(`${JSON.stringify({ status: 'ok', runner: await manager.stop(project) }, null, 2)}\n`);
-        return 0;
-      }
       if (command === 'runner:restart') {
         stdout.write(`${JSON.stringify({ status: 'ok', runner: await manager.restart(project) }, null, 2)}\n`);
         return 0;
@@ -179,12 +171,8 @@ function normalizeCommand(words: unknown[]): string | undefined {
     'project:validate': 'project:validate',
     'workflows:render': 'workflow:render',
     'workflow:render': 'workflow:render',
-    'runners:start': 'runner:start',
-    'runners:stop': 'runner:stop',
     'runners:restart': 'runner:restart',
     'runners:status': 'runner:status',
-    'runner:start': 'runner:start',
-    'runner:stop': 'runner:stop',
     'runner:restart': 'runner:restart',
     'runner:status': 'runner:status'
   };

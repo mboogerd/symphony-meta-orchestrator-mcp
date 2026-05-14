@@ -72,6 +72,7 @@ export function managedProjectYaml(project: ManagedProject): string {
     'projects:',
     `  - id: ${project.id}`,
     `    name: ${project.name}`,
+    ...(project.enabled === false ? ['    enabled: false'] : []),
     `    githubUrl: ${project.githubUrl}`,
     '    workflow:',
     ...workflowBody,

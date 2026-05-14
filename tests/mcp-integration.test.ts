@@ -4,11 +4,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { createRuntimeConfig, handleMcpMessage, startAllRunners, type JsonRpcResponse, type ManagedProject, type RunnerManager, type RunnerProcessState } from '../src/index.ts';
+import { createProjectRegistryService, createRuntimeConfig, handleMcpMessage, startAllRunners, type JsonRpcResponse, type ManagedProject, type RunnerManager, type RunnerProcessState } from '../src/index.ts';
 import { LinearService, type LinearSdkClient } from '../src/services/linear/index.ts';
 import { managedProject } from './project-fixtures.ts';
 
-test('MCP integration registers, validates, renders, starts, reports, and stops a managed project', async () => {
+test('MCP integration registers, validates, renders, enables, reports, and disables a managed project', async () => {
   const fixture = createProjectFixture('mrb20-happy-');
   const runnerCalls: string[] = [];
   const runner = mockRunnerManager(runnerCalls);
@@ -30,7 +30,7 @@ test('MCP integration registers, validates, renders, starts, reports, and stops 
     assertJsonRpcOk(rendered, 'render');
     assert.equal(toolPayload(rendered).workflow.workflowPath, join(fixture.workspacePath, 'WORKFLOW.md'));
 
-    const started = await callTool(runtime, 'start', 'start_runner', { projectId: fixture.project.id });
+    const started = await callTool(runtime, 'start', 'enable_project', { projectId: fixture.project.id });
     assertJsonRpcOk(started, 'start');
     assert.equal(toolPayload(started).runner.status.state, 'running');
 
@@ -38,10 +38,55 @@ test('MCP integration registers, validates, renders, starts, reports, and stops 
     assertJsonRpcOk(status, 'status');
     assert.equal(toolPayload(status).runner.state, 'running');
 
-    const stopped = await callTool(runtime, 'stop', 'stop_runner', { projectId: fixture.project.id });
+    const stopped = await callTool(runtime, 'stop', 'disable_project', { projectId: fixture.project.id });
     assertJsonRpcOk(stopped, 'stop');
     assert.equal(toolPayload(stopped).runner.state, 'stopped');
     assert.deepEqual(runnerCalls, ['start:meta-orchestrator', 'status:meta-orchestrator', 'stop:meta-orchestrator']);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('enable_project starts runner and persists enabled as the default', async () => {
+  const fixture = createProjectFixture('mrb122-enable-');
+  const runnerCalls: string[] = [];
+  fixture.project.enabled = false;
+
+  try {
+    const runtime = runtimeFor(fixture.configPath, {
+      createRunnerManager: () => mockRunnerManager(runnerCalls)
+    });
+    await callTool(runtime, 'register', 'register_project', { project: fixture.project });
+
+    const enabled = await callTool(runtime, 'enable', 'enable_project', { projectId: fixture.project.id });
+
+    assertJsonRpcOk(enabled, 'enable');
+    assert.equal(toolPayload(enabled).runner.status.state, 'running');
+    assert.deepEqual(runnerCalls, ['start:meta-orchestrator']);
+    assert.equal((await runtimeRegistryProject(runtime, fixture.project.id)).enabled, undefined);
+    assert.doesNotMatch(readFileSync(fixture.configPath, 'utf8'), /enabled: true|enabled: false/);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('disable_project stops runner and persists enabled: false', async () => {
+  const fixture = createProjectFixture('mrb122-disable-');
+  const runnerCalls: string[] = [];
+
+  try {
+    const runtime = runtimeFor(fixture.configPath, {
+      createRunnerManager: () => mockRunnerManager(runnerCalls)
+    });
+    await callTool(runtime, 'register', 'register_project', { project: fixture.project });
+
+    const disabled = await callTool(runtime, 'disable', 'disable_project', { projectId: fixture.project.id });
+
+    assertJsonRpcOk(disabled, 'disable');
+    assert.equal(toolPayload(disabled).runner.state, 'stopped');
+    assert.deepEqual(runnerCalls, ['stop:meta-orchestrator']);
+    assert.equal((await runtimeRegistryProject(runtime, fixture.project.id)).enabled, false);
+    assert.match(readFileSync(fixture.configPath, 'utf8'), /enabled: false/);
   } finally {
     fixture.cleanup();
   }
@@ -622,6 +667,92 @@ test('MCP server startup starts idle runners for all registered projects', async
   }
 });
 
+test('MCP server startup skips runner for project with enabled: false', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'mrb122-startup-disabled-'));
+  const configPath = join(root, 'registry.yaml');
+  const calls: string[] = [];
+
+  try {
+    writeFileSync(configPath, registryYaml(['disabled-project']).replace('    githubUrl:', '    enabled: false\n    githubUrl:'));
+    const runtime = runtimeFor(configPath, {
+      createRunnerManager: () => startupRunnerManager(calls, {
+        'disabled-project': 'idle'
+      })
+    });
+
+    await startAllRunners(runtime, testLogger());
+
+    assert.deepEqual(calls, []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('MCP server startup starts projects with enabled true or absent', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'mrb122-startup-enabled-'));
+  const configPath = join(root, 'registry.yaml');
+  const calls: string[] = [];
+
+  try {
+    writeFileSync(configPath, registryYaml(['explicit-project', 'default-project']).replace('    githubUrl:', '    enabled: true\n    githubUrl:'));
+    const runtime = runtimeFor(configPath, {
+      createRunnerManager: () => startupRunnerManager(calls, {
+        'explicit-project': 'idle',
+        'default-project': 'idle'
+      })
+    });
+
+    await startAllRunners(runtime, testLogger());
+
+    assert.deepEqual(calls, [
+      'status:explicit-project',
+      'start:explicit-project',
+      'status:default-project',
+      'start:default-project'
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('restart_runner works even when project is disabled', async () => {
+  const fixture = createProjectFixture('mrb122-restart-disabled-');
+  const runnerCalls: string[] = [];
+  fixture.project.enabled = false;
+
+  try {
+    const runtime = runtimeFor(fixture.configPath, {
+      createRunnerManager: () => mockRunnerManager(runnerCalls)
+    });
+    await callTool(runtime, 'register', 'register_project', { project: fixture.project });
+
+    const restarted = await callTool(runtime, 'restart', 'restart_runner', { projectId: fixture.project.id });
+
+    assertJsonRpcOk(restarted, 'restart');
+    assert.equal(toolPayload(restarted).runner.status.state, 'running');
+    assert.deepEqual(runnerCalls, ['restart:meta-orchestrator']);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('tools/list does not include start_runner or stop_runner', async () => {
+  const runtime = runtimeFor(join(mkdtempSync(join(tmpdir(), 'mrb122-tools-')), 'registry.yaml'));
+  const response = await handleMcpMessage({
+    jsonrpc: '2.0',
+    id: 'tools',
+    method: 'tools/list'
+  }, runtime);
+
+  assert.ok(response);
+  assertJsonRpcOk(response, 'tools');
+  const tools = ((response.result as { tools: Array<{ name: string }> }).tools).map((tool) => tool.name);
+  assert.equal(tools.includes('enable_project'), true);
+  assert.equal(tools.includes('disable_project'), true);
+  assert.equal(tools.includes('start_runner'), false);
+  assert.equal(tools.includes('stop_runner'), false);
+});
+
 test('MCP server startup skips runners already in running state', async () => {
   const root = mkdtempSync(join(tmpdir(), 'mrb120-startup-running-'));
   const configPath = join(root, 'registry.yaml');
@@ -757,6 +888,12 @@ async function callTool(runtime: Parameters<typeof handleMcpMessage>[1], id: str
 
   assert.ok(response);
   return response;
+}
+
+async function runtimeRegistryProject(runtime: Parameters<typeof handleMcpMessage>[1], projectId: string): Promise<ManagedProject> {
+  const project = (await createProjectRegistryService(runtime.configPath).list()).find((candidate) => candidate.id === projectId);
+  assert.ok(project);
+  return project;
 }
 
 function assertJsonRpcOk(response: JsonRpcResponse, id: string): void {

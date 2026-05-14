@@ -264,7 +264,7 @@ test('SDK MCP runner lifecycle tools use mocked runner and setup probes', async 
       await sdk.client.callTool({ name: 'register_project', arguments: { project: fixture.project } });
 
       assert.equal(toolPayload(await sdk.client.callTool({
-        name: 'start_runner',
+        name: 'enable_project',
         arguments: { projectId: fixture.project.id }
       })).runner.status.state, 'running');
       assert.equal(toolPayload(await sdk.client.callTool({
@@ -272,7 +272,7 @@ test('SDK MCP runner lifecycle tools use mocked runner and setup probes', async 
         arguments: { projectId: fixture.project.id }
       })).runner.state, 'running');
       assert.equal(toolPayload(await sdk.client.callTool({
-        name: 'stop_runner',
+        name: 'disable_project',
         arguments: { projectId: fixture.project.id }
       })).runner.state, 'stopped');
       assert.equal(toolPayload(await sdk.client.callTool({
