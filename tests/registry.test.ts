@@ -85,23 +85,57 @@ test('registry treats absent enabled as true default and omits enabled true from
   }
 });
 
-test('registry runtime hints omit runnerPort when registry does not configure one', async () => {
+test('registry runtime hints omit runner command and runnerPort when env does not configure them', async () => {
   const cwd = await mkdtemp(join(tmpdir(), 'mrb128-registry-runner-port-'));
   const configPath = join(cwd, 'symphony.registry.yaml');
   const registry = createProjectRegistryService(configPath);
+  const previousCommand = process.env.SYMPHONY_RUNNER_COMMAND;
 
   try {
+    delete process.env.SYMPHONY_RUNNER_COMMAND;
     await registry.create(baseProject);
 
     const project = (await registry.load()).projects[0] as ManagedProject & {
       symphony?: { command?: string; runnerPort?: number; workspaceRoot?: string; logsRoot?: string };
     };
 
-    assert.equal(project.symphony?.command, process.execPath);
+    assert.equal(project.symphony?.command, undefined);
     assert.equal(project.symphony?.runnerPort, undefined);
     assert.equal(project.symphony?.workspaceRoot, join(cwd, 'workspace'));
     assert.equal(project.symphony?.logsRoot, join(cwd, 'logs'));
   } finally {
+    if (previousCommand === undefined) {
+      delete process.env.SYMPHONY_RUNNER_COMMAND;
+    } else {
+      process.env.SYMPHONY_RUNNER_COMMAND = previousCommand;
+    }
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('registry runtime hints preserve explicit runner command from env', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'mrb133-registry-runner-command-'));
+  const configPath = join(cwd, 'symphony.registry.yaml');
+  const registry = createProjectRegistryService(configPath);
+  const previousCommand = process.env.SYMPHONY_RUNNER_COMMAND;
+
+  try {
+    process.env.SYMPHONY_RUNNER_COMMAND = 'custom-symphony';
+    await registry.create(baseProject);
+
+    const project = (await registry.load()).projects[0] as ManagedProject & {
+      symphony?: { command?: string; workspaceRoot?: string; logsRoot?: string };
+    };
+
+    assert.equal(project.symphony?.command, 'custom-symphony');
+    assert.equal(project.symphony?.workspaceRoot, join(cwd, 'workspace'));
+    assert.equal(project.symphony?.logsRoot, join(cwd, 'logs'));
+  } finally {
+    if (previousCommand === undefined) {
+      delete process.env.SYMPHONY_RUNNER_COMMAND;
+    } else {
+      process.env.SYMPHONY_RUNNER_COMMAND = previousCommand;
+    }
     rmSync(cwd, { recursive: true, force: true });
   }
 });

@@ -647,9 +647,11 @@ test('MCP integration reports live runner command and port failures when request
   const fixture = createProjectFixture('mrb20-runner-failure-', { command: 'definitely-missing-symphony-runner' });
   const checkedPorts: number[] = [];
   const previousRunnerPort = process.env.SYMPHONY_RUNNER_PORT;
+  const previousRunnerCommand = process.env.SYMPHONY_RUNNER_COMMAND;
 
   try {
     process.env.SYMPHONY_RUNNER_PORT = '4310';
+    process.env.SYMPHONY_RUNNER_COMMAND = process.execPath;
     const runtime = runtimeFor(fixture.configPath, {
       portAvailable: async (port) => {
         checkedPorts.push(port);
@@ -674,6 +676,11 @@ test('MCP integration reports live runner command and port failures when request
       delete process.env.SYMPHONY_RUNNER_PORT;
     } else {
       process.env.SYMPHONY_RUNNER_PORT = previousRunnerPort;
+    }
+    if (previousRunnerCommand === undefined) {
+      delete process.env.SYMPHONY_RUNNER_COMMAND;
+    } else {
+      process.env.SYMPHONY_RUNNER_COMMAND = previousRunnerCommand;
     }
     fixture.cleanup();
   }
