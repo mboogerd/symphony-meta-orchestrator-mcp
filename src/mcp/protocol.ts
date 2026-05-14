@@ -3,6 +3,7 @@ import { packageInfo } from '../package-info.ts';
 import { createLinearService, LinearServiceError, type LinearService } from '../services/linear/index.ts';
 import { setupManagedProject } from '../services/onboarding/index.ts';
 import { createProjectRegistryService, ProjectRegistryValidationError, type ManagedProject } from '../services/registry/index.ts';
+import { projectSchemaErrorDetails, projectSchemaHelp } from '../services/registry/schema-help.ts';
 import { createRunnerManager, type RunnerManager } from '../services/runner/index.ts';
 import { validateProjectWorkflowSetups, WorkflowSetupValidationError, writeProjectWorkflow, type PortAvailabilityProbe, type WorkflowSetupValidationPhase } from '../services/workflow/index.ts';
 
@@ -88,7 +89,8 @@ export async function handleMcpMessage(message: unknown, runtime: McpRuntimeConf
         tools: [
           tool('list_projects', 'List managed projects from the local registry.', {}),
           tool('get_project', 'Get one managed project from the local registry.', { projectId: stringSchema() }, ['projectId']),
-          tool('register_project', 'Register a managed project in the local registry.', { project: projectSchema() }, ['project']),
+          tool('register_project', 'Register a complete managed project object in the local registry. If you need the required shape, call describe_project_schema first; for guided defaults, prefer setup_project.', { project: projectSchema() }, ['project']),
+          tool('describe_project_schema', 'Return guidance and an annotated example object for register_project.', {}),
           tool('validate_project', 'Validate one project or all registry projects and workflow setup.', {
             projectId: stringSchema(),
             phase: { type: 'string', enum: ['schema', 'render', 'workspace', 'live'], default: 'workspace' },
@@ -199,6 +201,10 @@ async function handleToolCall(message: JsonRpcRequest, runtime: McpRuntimeConfig
     if (name === 'register_project') {
       const project = readProject(argumentsValue.project);
       return toolResult(message.id ?? null, { project: await registry.create(project) });
+    }
+
+    if (name === 'describe_project_schema') {
+      return toolResult(message.id ?? null, projectSchemaHelp());
     }
 
     if (name === 'validate_project') {
@@ -427,7 +433,7 @@ function errorDetails(error: unknown): Record<string, unknown> {
     return error.details;
   }
   if (error instanceof ProjectRegistryValidationError) {
-    return { issues: error.issues };
+    return projectSchemaErrorDetails(error.issues);
   }
   if (error instanceof WorkflowSetupValidationError) {
     return { setup: error.validations };

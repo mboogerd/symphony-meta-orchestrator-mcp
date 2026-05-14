@@ -70,6 +70,28 @@ test('SDK MCP register, list, get, validate, and generate workflow use the real 
   }
 });
 
+test('SDK MCP describe_project_schema exposes register_project template', async () => {
+  const fixture = createProjectFixture('mrb91-sdk-schema-');
+
+  try {
+    const sdk = await createSdkHarness(runtimeFor(fixture.configPath));
+    try {
+      const described = toolPayload(await sdk.client.callTool({
+        name: 'describe_project_schema',
+        arguments: {}
+      }));
+
+      assert.equal(described.status, 'ok');
+      assert.deepEqual(described.guidance.requiredTopLevelFields, ['id', 'name', 'tracker', 'repo', 'workflow', 'symphony', 'codex']);
+      assert.equal(described.example.tracker.kind, 'linear');
+    } finally {
+      await sdk.close();
+    }
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test('SDK MCP returns project_not_found as a structured tool error matching compatibility', async () => {
   const fixture = createProjectFixture('mrb27-sdk-missing-');
 

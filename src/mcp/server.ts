@@ -10,6 +10,7 @@ import {
   type ManagedProject,
   ProjectRegistryValidationError
 } from '../services/registry/index.ts';
+import { projectSchemaErrorDetails, projectSchemaHelp } from '../services/registry/schema-help.ts';
 import { setupManagedProject } from '../services/onboarding/index.ts';
 import { createRunnerManager, type RunnerManager } from '../services/runner/index.ts';
 import {
@@ -95,9 +96,13 @@ function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void
   }, async ({ projectId }) => withToolErrors(async () => toolResult({ project: await requireProject(runtime, projectId) })));
 
   server.registerTool('register_project', {
-    description: 'Register a managed project in the local registry.',
+    description: 'Register a complete managed project object in the local registry. If you need the required shape, call describe_project_schema first; for guided defaults, prefer setup_project.',
     inputSchema: { project: managedProjectSchema }
   }, async ({ project }) => withToolErrors(async () => toolResult({ project: await registry(runtime).create(project) })));
+
+  server.registerTool('describe_project_schema', {
+    description: 'Return guidance and an annotated example object for register_project.'
+  }, async () => withToolErrors(async () => toolResult(projectSchemaHelp())));
 
   server.registerTool('validate_project', {
     description: 'Validate one project or all registry projects and workflow setup.',
@@ -329,7 +334,7 @@ function errorDetails(error: unknown): Record<string, unknown> {
     return error.details;
   }
   if (error instanceof ProjectRegistryValidationError) {
-    return { issues: error.issues };
+    return projectSchemaErrorDetails(error.issues);
   }
   if (error instanceof WorkflowSetupValidationError) {
     return { setup: error.validations };
