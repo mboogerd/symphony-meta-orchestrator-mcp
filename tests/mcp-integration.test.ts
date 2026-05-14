@@ -317,7 +317,45 @@ test('MCP integration rejects setup for a git repo without an origin remote', as
     assert.equal(payload.setup.steps[1].error.code, 'repo_remote_missing');
     assert.equal(payload.setup.steps[1].error.field, 'repo.remoteUrl');
     assert.match(payload.setup.steps[1].error.message, /Git origin remote is not configured/);
+    assert.match(payload.setup.steps[1].error.message, /git remote add origin <url>/);
     assert.equal(payload.setup.project, undefined);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('MCP integration accepts explicit setup remote values for a git repo without an origin remote', async () => {
+  const fixture = createProjectFixture('mrb101-explicit-remote-');
+  const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+
+  try {
+    initGitRepo(fixture.repoPath);
+    const runtime = runtimeFor(fixture.configPath, {
+      createLinearService: () => new LinearService({ client: mockLinearClient(calls) })
+    });
+
+    const response = await callTool(runtime, 'setup-explicit-remote', 'setup_project', {
+      name: 'Explicit Remote Project',
+      teamKey: 'MRB',
+      repoPath: fixture.repoPath,
+      remoteUrl: 'https://example.test/explicit-remote.git',
+      cloneSource: 'git@example.test:explicit-remote.git',
+      runnerPort: fixture.project.symphony.runnerPort,
+      workspaceRoot: fixture.workspacePath,
+      logsRoot: fixture.logsPath
+    });
+
+    assertJsonRpcOk(response, 'setup-explicit-remote');
+    const payload = toolPayload(response);
+    assert.equal(payload.status, 'ok');
+    assert.deepEqual(payload.setup.steps.map((step: { name: string; status: string }) => `${step.name}:${step.status}`), [
+      'linearProject:ok',
+      'registry:ok',
+      'workflow:ok',
+      'runner:skipped'
+    ]);
+    assert.equal(payload.setup.project.repo.remoteUrl, 'https://example.test/explicit-remote.git');
+    assert.equal(payload.setup.project.repo.cloneSource, 'git@example.test:explicit-remote.git');
   } finally {
     fixture.cleanup();
   }

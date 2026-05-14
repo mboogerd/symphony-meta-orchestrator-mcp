@@ -21,6 +21,8 @@ export type SetupProjectInput = {
   runnerPort: number;
   workspaceRoot: string;
   logsRoot: string;
+  remoteUrl?: string;
+  cloneSource?: string;
   startRunner?: boolean;
   linearProjectId?: string;
 };
@@ -122,7 +124,7 @@ async function buildManagedProject(
   const repoPath = resolve(input.repoPath);
   const workspaceRoot = resolve(input.workspaceRoot);
   const logsRoot = resolve(input.logsRoot);
-  const repoRemote = await resolveRepoRemote(repoPath);
+  const repoRemote = input.remoteUrl ?? input.cloneSource ?? await resolveRepoRemote(repoPath);
   const runner = await resolveDefaultRunner(repoPath, runnerBootstrap);
 
   return {
@@ -137,9 +139,9 @@ async function buildManagedProject(
     },
     repo: {
       path: repoPath,
-      remoteUrl: repoRemote ?? repoPath,
+      remoteUrl: input.remoteUrl ?? repoRemote ?? repoPath,
       defaultBranch: 'main',
-      cloneSource: repoRemote ?? repoPath
+      cloneSource: input.cloneSource ?? repoRemote ?? repoPath
     },
     workflow: {
       source: 'generated',
@@ -182,7 +184,7 @@ async function resolveRepoRemote(repoPath: string): Promise<string | undefined> 
   throw new SetupProjectValidationError(
     'repo_remote_missing',
     'repo.remoteUrl',
-    `Git origin remote is not configured for ${repoPath}; add a real origin remote or register the project with explicit repo.remoteUrl and repo.cloneSource.`
+    `Git origin remote is not configured for ${repoPath}; run git remote add origin <url>, pass setup_project remoteUrl and cloneSource, or register the project with explicit repo.remoteUrl and repo.cloneSource.`
   );
 }
 

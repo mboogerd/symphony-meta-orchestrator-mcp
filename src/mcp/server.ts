@@ -166,6 +166,8 @@ function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void
       runnerPort,
       workspaceRoot: requiredString,
       logsRoot: requiredString,
+      remoteUrl: optionalString,
+      cloneSource: optionalString,
       linearProjectId: optionalString,
       startRunner: z.boolean().optional()
     }
