@@ -363,7 +363,8 @@ export class LinearService {
         throw new LinearServiceError(
           'duplicate_project_name',
           'find_project_for_team',
-          `Multiple Linear projects named "${projectName}" were found in the resolved team`,
+          `Multiple Linear projects named "${projectName}" were found in the resolved team. ` +
+            'Pass setup_project linearProjectId to select the intended project explicitly.',
           { name: projectName, teamId, count: matchingProjects.length }
         );
       }

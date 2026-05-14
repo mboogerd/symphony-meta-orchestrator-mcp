@@ -179,6 +179,53 @@ test('setupManagedProject falls back to OS temp roots when roots are omitted', a
   assert.equal('repo' in (result.project ?? {}), false);
 });
 
+test('setupManagedProject reuses an existing same-name Linear project before creating one', async () => {
+  let findProjectCalls = 0;
+  let createProjectCalls = 0;
+
+  const result = await setupManagedProject({
+    name: 'Reusable Project',
+    teamKey: 'MRB',
+    githubUrl: 'https://github.com/mboogerd/reusable-project.git'
+  }, {
+    env: { SYMPHONY_RUNNER_COMMAND: 'node' },
+    linear: {
+      ...fakeLinear(),
+      findProjectByNameForTeam: async (name: string, teamId: string) => {
+        findProjectCalls += 1;
+        assert.equal(name, 'Reusable Project');
+        assert.equal(teamId, 'team-1');
+        return {
+          id: 'reusable-linear-project',
+          name: 'Reusable Project',
+          url: 'https://linear.app/mrboo/project/reusable-project'
+        };
+      },
+      createProject: async () => {
+        createProjectCalls += 1;
+        throw new Error('createProject should not be called when a same-name project exists');
+      }
+    } as never,
+    registry: {
+      load: async () => ({ version: 3, projects: [] }),
+      create: async (project: unknown) => project as never
+    } as never,
+    runnerManager: { start: async () => ({}) } as never
+  });
+
+  assert.equal(findProjectCalls, 1);
+  assert.equal(createProjectCalls, 0);
+  assert.equal(result.linearProject?.id, 'reusable-linear-project');
+  assert.equal(result.project?.tracker.projectId, 'reusable-linear-project');
+  assert.deepEqual(result.steps.map((step) => `${step.name}:${step.status}`), [
+    'linearProject:ok',
+    'bootstrap:ok',
+    'registry:ok',
+    'workflow:ok',
+    'runner:skipped'
+  ]);
+});
+
 test('setupManagedProject rejects duplicate registry id before creating a Linear project', async () => {
   let createProjectCalls = 0;
 
