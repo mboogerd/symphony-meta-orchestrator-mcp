@@ -159,9 +159,6 @@ test('MCP integration sets up a managed project end-to-end with defaults', async
       name: 'Dummy Project',
       teamKey: 'MRB',
       githubUrl: fixture.project.repo.remoteUrl,
-      runnerPort: fixture.project.symphony.runnerPort,
-      workspaceRoot: fixture.workspacePath,
-      logsRoot: fixture.logsPath,
       startRunner: true
     });
 
@@ -179,15 +176,20 @@ test('MCP integration sets up a managed project end-to-end with defaults', async
     assert.equal(payload.setup.project.tracker.teamId, 'linear-team-id');
     assert.equal(payload.setup.project.tracker.projectId, 'project-id');
     assert.equal(payload.setup.project.id, 'dummy-project');
-    assert.match(readFileSync(join(fixture.workspacePath, 'WORKFLOW.md'), 'utf8'), /project_slug: dummy-project/);
+    const defaultWorkspace = join(tmpdir(), 'symphony-workspaces', 'dummy-project');
+    assert.match(readFileSync(join(defaultWorkspace, 'WORKFLOW.md'), 'utf8'), /project_slug: dummy-project/);
+    assert.match(readFileSync(join(defaultWorkspace, 'WORKFLOW.md'), 'utf8'), /after_create: git clone https:\/\/github\.com\/mboogerd\/symphony-meta-orchestrator-mcp\.git ./);
     assert.deepEqual(payload.setup.project.workflow, { source: 'generated', template: 'default' });
+    assert.equal(payload.setup.project.githubUrl, fixture.project.repo.remoteUrl);
+    assert.equal(payload.setup.project.repo, undefined);
     assert.equal(payload.setup.project.symphony.command, process.execPath);
     assert.deepEqual(payload.setup.project.symphony.args, [
       join(process.cwd(), 'test-symphony', 'bin', 'symphony'),
       '--i-understand-that-this-will-be-running-without-the-usual-guardrails'
     ]);
     assert.equal(payload.setup.project.symphony.cwd, join(process.cwd(), 'test-symphony'));
-    assert.equal(payload.setup.workflow.workflowPath, join(fixture.workspacePath, 'WORKFLOW.md'));
+    assert.equal(payload.setup.workflow.workflowPath, join(defaultWorkspace, 'WORKFLOW.md'));
+    assert.equal(payload.setup.workflow.logsRoot, join(tmpdir(), 'symphony-logs', 'dummy-project'));
     assert.equal(existsSync(fixture.repoPath), false);
     assert.equal(payload.setup.runner.status.state, 'running');
     assert.deepEqual(calls.map((call) => call.method), ['teams', 'teams', 'team.projects', 'createProject']);
@@ -210,10 +212,7 @@ test('MCP integration attaches existing same-name Linear project during setup', 
     const response = await callTool(runtime, 'setup-existing-name', 'setup_project', {
       name: 'Existing Name Project',
       teamKey: 'MRB',
-      githubUrl: fixture.project.repo.remoteUrl,
-      runnerPort: fixture.project.symphony.runnerPort,
-      workspaceRoot: fixture.workspacePath,
-      logsRoot: fixture.logsPath
+      githubUrl: fixture.project.repo.remoteUrl
     });
 
     assertJsonRpcOk(response, 'setup-existing-name');
@@ -242,10 +241,7 @@ test('MCP integration can set up a managed project from an existing Linear proje
       name: 'Existing Project',
       teamKey: 'MRB',
       linearProjectId: 'existing-project-id',
-      githubUrl: fixture.project.repo.remoteUrl,
-      runnerPort: fixture.project.symphony.runnerPort,
-      workspaceRoot: fixture.workspacePath,
-      logsRoot: fixture.logsPath
+      githubUrl: fixture.project.repo.remoteUrl
     });
 
     assertJsonRpcOk(response, 'setup-existing');
@@ -277,10 +273,7 @@ test('MCP integration setup_project uses SYMPHONY_RUNNER_COMMAND without bootstr
     const response = await callTool(runtime, 'setup-env-runner', 'setup_project', {
       name: 'Env Runner Project',
       teamKey: 'MRB',
-      githubUrl: fixture.project.repo.remoteUrl,
-      runnerPort: fixture.project.symphony.runnerPort,
-      workspaceRoot: fixture.workspacePath,
-      logsRoot: fixture.logsPath
+      githubUrl: fixture.project.repo.remoteUrl
     });
 
     assertJsonRpcOk(response, 'setup-env-runner');
@@ -288,49 +281,6 @@ test('MCP integration setup_project uses SYMPHONY_RUNNER_COMMAND without bootstr
     assert.equal(payload.setup.project.symphony.command, 'custom-symphony-runner');
     assert.deepEqual(payload.setup.project.symphony.args, ['--i-understand-that-this-will-be-running-without-the-usual-guardrails']);
     assert.equal(payload.setup.project.symphony.cwd, process.cwd());
-  } finally {
-    fixture.cleanup();
-  }
-});
-
-test('MCP integration setup_project accepts explicit runner configuration', async () => {
-  const fixture = createProjectFixture('mrb102-runner-input-');
-  const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
-
-  try {
-    rmSync(fixture.repoPath, { recursive: true, force: true });
-    const runtime = runtimeFor(fixture.configPath, {
-      createLinearService: () => new LinearService({ client: mockLinearClient(calls) }),
-      runnerBootstrap: async () => {
-        throw new Error('runner bootstrap should not be called when runnerCommand is set');
-      }
-    });
-
-    const response = await callTool(runtime, 'setup-input-runner', 'setup_project', {
-      name: 'Input Runner Project',
-      teamKey: 'MRB',
-      githubUrl: fixture.project.repo.remoteUrl,
-      runnerPort: fixture.project.symphony.runnerPort,
-      workspaceRoot: fixture.workspacePath,
-      logsRoot: fixture.logsPath,
-      runnerCommand: 'custom-runner',
-      runnerArgs: ['--serve', '--port', '5000'],
-      runnerCwd: fixture.workspacePath
-    });
-
-    assertJsonRpcOk(response, 'setup-input-runner');
-    const payload = toolPayload(response);
-    assert.equal(payload.status, 'ok');
-    assert.deepEqual(payload.setup.steps.map((step: { name: string; status: string }) => `${step.name}:${step.status}`), [
-      'linearProject:ok',
-      'bootstrap:ok',
-      'registry:ok',
-      'workflow:ok',
-      'runner:skipped'
-    ]);
-    assert.equal(payload.setup.project.symphony.command, 'custom-runner');
-    assert.deepEqual(payload.setup.project.symphony.args, ['--serve', '--port', '5000']);
-    assert.equal(payload.setup.project.symphony.cwd, fixture.workspacePath);
   } finally {
     fixture.cleanup();
   }
@@ -352,10 +302,7 @@ test('MCP integration reports runner bootstrap failures in the bootstrap step', 
     const response = await callTool(runtime, 'setup-bootstrap-error', 'setup_project', {
       name: 'Bootstrap Error Project',
       teamKey: 'MRB',
-      githubUrl: fixture.project.repo.remoteUrl,
-      runnerPort: fixture.project.symphony.runnerPort,
-      workspaceRoot: fixture.workspacePath,
-      logsRoot: fixture.logsPath
+      githubUrl: fixture.project.repo.remoteUrl
     });
 
     assertJsonRpcOk(response, 'setup-bootstrap-error');
@@ -387,10 +334,7 @@ test('MCP integration rejects an existing Linear project outside the resolved te
       name: 'Wrong Team Project',
       teamKey: 'MRB',
       linearProjectId: 'wrong-team-project-id',
-      githubUrl: fixture.project.repo.remoteUrl,
-      runnerPort: fixture.project.symphony.runnerPort,
-      workspaceRoot: fixture.workspacePath,
-      logsRoot: fixture.logsPath
+      githubUrl: fixture.project.repo.remoteUrl
     });
 
     assertJsonRpcOk(response, 'setup-wrong-team');
@@ -420,10 +364,7 @@ test('MCP integration rejects setup for a non-GitHub URL', async () => {
     const response = await callTool(runtime, 'setup-invalid-url', 'setup_project', {
       name: 'Invalid URL Project',
       teamKey: 'MRB',
-      githubUrl: 'https://example.test/repo.git',
-      runnerPort: fixture.project.symphony.runnerPort,
-      workspaceRoot: fixture.workspacePath,
-      logsRoot: fixture.logsPath
+      githubUrl: 'https://example.test/repo.git'
     });
 
     assertJsonRpcOk(response, 'setup-invalid-url');
@@ -445,7 +386,63 @@ test('MCP integration rejects setup for a non-GitHub URL', async () => {
   }
 });
 
-test('MCP integration derives remote values from the GitHub URL', async () => {
+test('setup_project resolves workspaceRoot from DEFAULT_SYMPHONY_WORKSPACES env var', async () => {
+  const fixture = createProjectFixture('mrb121-workspace-env-');
+  const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+
+  try {
+    const runtime = runtimeFor(fixture.configPath, {
+      createLinearService: () => new LinearService({ client: mockLinearClient(calls) })
+    });
+    const workspaceBase = join(fixture.root, 'custom', 'ws');
+    runtime.env.DEFAULT_SYMPHONY_WORKSPACES = workspaceBase;
+
+    const response = await callTool(runtime, 'setup-workspace-env', 'setup_project', {
+      name: 'Dummy',
+      teamKey: 'MRB',
+      githubUrl: fixture.project.repo.remoteUrl
+    });
+
+    assertJsonRpcOk(response, 'setup-workspace-env');
+    const payload = toolPayload(response);
+    assert.equal(payload.status, 'ok');
+    assert.equal(payload.setup.workflow.workspaceRoot, join(workspaceBase, 'dummy'));
+    assert.equal(payload.setup.project.symphony.workspaceRoot, join(workspaceBase, 'dummy'));
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('setup_project fails gracefully when Linear has duplicate project names', async () => {
+  const fixture = createProjectFixture('mrb121-duplicate-linear-');
+  const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+
+  try {
+    const runtime = runtimeFor(fixture.configPath, {
+      createLinearService: () => new LinearService({ client: mockLinearClient(calls, { duplicateProjectName: 'Duplicate Project' }) })
+    });
+
+    const response = await callTool(runtime, 'setup-duplicate-linear', 'setup_project', {
+      name: 'Duplicate Project',
+      teamKey: 'MRB',
+      githubUrl: fixture.project.repo.remoteUrl
+    });
+
+    assertJsonRpcOk(response, 'setup-duplicate-linear');
+    const result = response.result as Record<string, unknown>;
+    assert.equal(result.isError, true);
+    const payload = toolPayload(response);
+    assert.equal(payload.status, 'invalid');
+    assert.deepEqual(payload.setup.steps.map((step: { name: string; status: string }) => `${step.name}:${step.status}`), [
+      'linearProject:error'
+    ]);
+    assert.equal(payload.setup.steps[0].error.code, 'duplicate_project_name');
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('MCP integration derives githubUrl without exposing repo fields', async () => {
   const fixture = createProjectFixture('mrb101-explicit-remote-');
   const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
 
@@ -457,10 +454,7 @@ test('MCP integration derives remote values from the GitHub URL', async () => {
     const response = await callTool(runtime, 'setup-github-remote', 'setup_project', {
       name: 'GitHub Remote Project',
       teamKey: 'MRB',
-      githubUrl: fixture.project.repo.remoteUrl,
-      runnerPort: fixture.project.symphony.runnerPort,
-      workspaceRoot: fixture.workspacePath,
-      logsRoot: fixture.logsPath
+      githubUrl: fixture.project.repo.remoteUrl
     });
 
     assertJsonRpcOk(response, 'setup-github-remote');
@@ -473,8 +467,8 @@ test('MCP integration derives remote values from the GitHub URL', async () => {
       'workflow:ok',
       'runner:skipped'
     ]);
-    assert.equal(payload.setup.project.repo.remoteUrl, fixture.project.repo.remoteUrl);
-    assert.equal(payload.setup.project.repo.cloneSource, fixture.project.repo.remoteUrl);
+    assert.equal(payload.setup.project.githubUrl, fixture.project.repo.remoteUrl);
+    assert.equal(payload.setup.project.repo, undefined);
   } finally {
     fixture.cleanup();
   }
@@ -493,10 +487,7 @@ test('MCP integration bootstraps missing workflow during project setup', async (
     const response = await callTool(runtime, 'setup', 'setup_project', {
       name: 'Partial Project',
       teamKey: 'MRB',
-      githubUrl: fixture.project.repo.remoteUrl,
-      runnerPort: fixture.project.symphony.runnerPort,
-      workspaceRoot: fixture.workspacePath,
-      logsRoot: fixture.logsPath
+      githubUrl: fixture.project.repo.remoteUrl
     });
 
     assertJsonRpcOk(response, 'setup');
@@ -512,7 +503,7 @@ test('MCP integration bootstraps missing workflow during project setup', async (
       'workflow:ok',
       'runner:skipped'
     ]);
-    assert.equal(payload.setup.workflow.workflowPath, join(fixture.workspacePath, 'WORKFLOW.md'));
+    assert.equal(payload.setup.workflow.workflowPath, join(tmpdir(), 'symphony-workspaces', 'partial-project', 'WORKFLOW.md'));
     assert.equal(existsSync(payload.setup.workflow.workflowPath), true);
   } finally {
     fixture.cleanup();
@@ -532,10 +523,7 @@ test('MCP integration does not create or require a local repo during project set
     const response = await callTool(runtime, 'setup-repo-file', 'setup_project', {
       name: 'Repo File Project',
       teamKey: 'MRB',
-      githubUrl: fixture.project.repo.remoteUrl,
-      runnerPort: fixture.project.symphony.runnerPort,
-      workspaceRoot: fixture.workspacePath,
-      logsRoot: fixture.logsPath
+      githubUrl: fixture.project.repo.remoteUrl
     });
 
     assertJsonRpcOk(response, 'setup-repo-file');
@@ -916,7 +904,7 @@ function testLogger() {
   };
 }
 
-function mockLinearClient(calls: Array<{ method: string; input: Record<string, unknown> }>): LinearSdkClient {
+function mockLinearClient(calls: Array<{ method: string; input: Record<string, unknown> }>, options: { duplicateProjectName?: string } = {}): LinearSdkClient {
   let nextIssue = 1;
   return {
     async issue(id) {
@@ -1013,6 +1001,24 @@ function mockLinearClient(calls: Array<{ method: string; input: Record<string, u
                   slugId: 'existing-name-project-slug',
                   url: 'https://linear.example/project/existing-name-project-slug'
                 }]
+              };
+            }
+            if (projectsInput?.filter?.name?.eqIgnoreCase === options.duplicateProjectName) {
+              return {
+                nodes: [
+                  {
+                    id: 'duplicate-project-1',
+                    name: options.duplicateProjectName,
+                    slugId: 'duplicate-project-1',
+                    url: 'https://linear.example/project/duplicate-project-1'
+                  },
+                  {
+                    id: 'duplicate-project-2',
+                    name: options.duplicateProjectName,
+                    slugId: 'duplicate-project-2',
+                    url: 'https://linear.example/project/duplicate-project-2'
+                  }
+                ]
               };
             }
             return { nodes: [] };

@@ -26,7 +26,6 @@ import { setupProjectDescription } from './tool-descriptions.ts';
 
 const optionalString = z.string().trim().min(1).optional();
 const requiredString = z.string().trim().min(1);
-const runnerPort = z.number().int().min(1).max(65535);
 const linearIssueSchema = {
   title: requiredString,
   teamId: optionalString,
@@ -201,12 +200,6 @@ function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void
       name: requiredString,
       teamKey: requiredString,
       githubUrl: requiredString,
-      runnerPort,
-      workspaceRoot: optionalString,
-      logsRoot: optionalString,
-      runnerCommand: optionalString,
-      runnerArgs: z.array(requiredString).optional(),
-      runnerCwd: optionalString,
       linearProjectId: optionalString,
       startRunner: z.boolean().optional()
     }

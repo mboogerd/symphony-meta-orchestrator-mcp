@@ -18,12 +18,6 @@ export type SetupProjectInput = {
   name: string;
   teamKey: string;
   githubUrl: string;
-  runnerPort: number;
-  workspaceRoot?: string;
-  logsRoot?: string;
-  runnerCommand?: string;
-  runnerArgs?: string[];
-  runnerCwd?: string;
   startRunner?: boolean;
   linearProjectId?: string;
 };
@@ -86,7 +80,7 @@ export async function setupManagedProject(input: SetupProjectInput, services: Se
   }
 
   try {
-    runnerConfig = await resolveDefaultRunner(input, services.runnerBootstrap ?? bootstrapSymphonyRunner, services.env ?? process.env);
+    runnerConfig = await resolveDefaultRunner(services.runnerBootstrap ?? bootstrapSymphonyRunner, services.env ?? process.env);
     steps.push({ name: 'bootstrap', status: 'ok', output: { runner: runnerConfig } });
   } catch (error) {
     steps.push({ name: 'bootstrap', status: 'error', error: structuredError(error) });
@@ -134,10 +128,7 @@ async function buildManagedProject(
 ): Promise<ManagedProject> {
   const githubUrl = normalizeGithubUrl(input.githubUrl);
   const projectSlug = slugify(input.name);
-  const repoSlug = githubRepoSlug(githubUrl);
-  const workspaceRoot = resolve(input.workspaceRoot ?? join(env.DEFAULT_SYMPHONY_WORKSPACES ?? join(tmpdir(), 'symphony-workspaces'), projectSlug));
-  const logsRoot = resolve(input.logsRoot ?? join(env.DEFAULT_SYMPHONY_LOGS ?? join(tmpdir(), 'symphony-logs'), projectSlug));
-  const repoPath = join(workspaceRoot, repoSlug);
+  const { workspaceRoot, logsRoot } = resolveProjectPaths(projectSlug, env);
 
   const project = {
     id: projectSlug,
@@ -167,25 +158,14 @@ async function buildManagedProject(
         projectSlug: linearProjectUrlSlug(linearProject)
       }
     },
-    repo: {
-      enumerable: false,
-      value: {
-        path: repoPath,
-        remoteUrl: githubUrl,
-        defaultBranch: 'main',
-        cloneSource: githubUrl
-      }
-    },
     symphony: {
       enumerable: false,
       value: {
         command: runner.command,
         args: runner.args,
         cwd: runner.cwd,
-        runnerPort: input.runnerPort,
         workspaceRoot,
-        logsRoot,
-        dashboardUrl: `http://localhost:${input.runnerPort}`
+        logsRoot
       }
     }
   });
@@ -193,16 +173,8 @@ async function buildManagedProject(
   return project;
 }
 
-async function resolveDefaultRunner(input: SetupProjectInput, runnerBootstrap: RunnerBootstrapper, env: Environment): Promise<RunnerBootstrapResult> {
-  const defaultCwd = resolve(input.runnerCwd ?? process.cwd());
-  const commandInput = input.runnerCommand?.trim();
-  if (commandInput !== undefined && commandInput.length > 0) {
-    return {
-      command: commandInput,
-      args: input.runnerArgs ?? [SYMPHONY_GUARDRAIL_FLAG],
-      cwd: defaultCwd
-    };
-  }
+async function resolveDefaultRunner(runnerBootstrap: RunnerBootstrapper, env: Environment): Promise<RunnerBootstrapResult> {
+  const defaultCwd = resolve(process.cwd());
 
   const commandOverride = env.SYMPHONY_RUNNER_COMMAND?.trim();
   if (commandOverride !== undefined && commandOverride.length > 0) {
@@ -214,6 +186,15 @@ async function resolveDefaultRunner(input: SetupProjectInput, runnerBootstrap: R
   }
 
   return runnerBootstrap(defaultCwd);
+}
+
+function resolveProjectPaths(projectSlug: string, env: Environment): { workspaceRoot: string; logsRoot: string } {
+  const workspacesBase = env.DEFAULT_SYMPHONY_WORKSPACES ?? join(tmpdir(), 'symphony-workspaces');
+  const logsBase = env.DEFAULT_SYMPHONY_LOGS ?? join(tmpdir(), 'symphony-logs');
+  return {
+    workspaceRoot: resolve(join(workspacesBase, projectSlug)),
+    logsRoot: resolve(join(logsBase, projectSlug))
+  };
 }
 
 export async function bootstrapSymphonyRunner(_repoPath: string): Promise<RunnerBootstrapResult> {
@@ -305,14 +286,6 @@ function normalizeGithubUrl(value: string): string {
     'githubUrl',
     'githubUrl must be a GitHub repository URL, for example https://github.com/org/repo.git or git@github.com:org/repo.git.'
   );
-}
-
-function githubRepoSlug(githubUrl: string): string {
-  const match = githubUrl.match(/github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?$/i);
-  if (match === null) {
-    return slugify(githubUrl);
-  }
-  return slugify(`${match[1]}-${match[2]}`);
 }
 
 function structuredError(error: unknown): Record<string, unknown> {

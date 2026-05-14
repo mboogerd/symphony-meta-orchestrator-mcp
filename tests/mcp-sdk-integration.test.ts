@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -173,7 +172,6 @@ test('SDK MCP setup_project matches compatibility tool behavior', async () => {
   const runnerCalls: string[] = [];
 
   try {
-    configureGitOrigin(fixture.project.repo.path);
     const runtime = runtimeFor(fixture.configPath, {
       createLinearService: () => new LinearService({ client: mockLinearClient(calls) }),
       createRunnerManager: () => mockRunnerManager(runnerCalls)
@@ -186,9 +184,6 @@ test('SDK MCP setup_project matches compatibility tool behavior', async () => {
           name: 'SDK Project',
           teamKey: 'MRB',
           githubUrl: fixture.project.repo.remoteUrl,
-          runnerPort: fixture.project.symphony.runnerPort,
-          workspaceRoot: fixture.project.symphony.workspaceRoot,
-          logsRoot: fixture.project.symphony.logsRoot,
           startRunner: true
         }
       }));
@@ -224,7 +219,6 @@ test('SDK MCP setup_project can attach an existing Linear project', async () => 
   const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
 
   try {
-    configureGitOrigin(fixture.project.repo.path);
     const runtime = runtimeFor(fixture.configPath, {
       createLinearService: () => new LinearService({ client: mockLinearClient(calls) })
     });
@@ -236,10 +230,7 @@ test('SDK MCP setup_project can attach an existing Linear project', async () => 
           name: 'Existing SDK Project',
           teamKey: 'MRB',
           linearProjectId: 'existing-project-id',
-          githubUrl: fixture.project.repo.remoteUrl,
-          runnerPort: fixture.project.symphony.runnerPort,
-          workspaceRoot: fixture.project.symphony.workspaceRoot,
-          logsRoot: fixture.project.symphony.logsRoot
+          githubUrl: fixture.project.repo.remoteUrl
         }
       }));
 
@@ -397,16 +388,6 @@ function createProjectFixture(prefix: string) {
     project,
     cleanup: () => rmSync(root, { recursive: true, force: true })
   };
-}
-
-function configureGitOrigin(repoPath: string): void {
-  initGitRepo(repoPath);
-  execFileSync('git', ['-C', repoPath, 'remote', 'add', 'origin', 'https://example.test/repo.git']);
-}
-
-function initGitRepo(repoPath: string): void {
-  rmSync(join(repoPath, '.git'), { recursive: true, force: true });
-  execFileSync('git', ['init', '-b', 'main', repoPath]);
 }
 
 function runtimeFor(configPath: string, services: NonNullable<McpServerRuntimeConfig['mcpServices']> = {}): McpServerRuntimeConfig {

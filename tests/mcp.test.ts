@@ -61,9 +61,53 @@ test('MCP tools/list exposes control-plane tools', async () => {
   ]);
   const setupProjectTool = tools.find((tool) => tool.name === 'setup_project');
   assert.equal(setupProjectTool?.description, setupProjectDescription);
+  assert.deepEqual((setupProjectTool?.inputSchema as any).required, ['name', 'teamKey', 'githubUrl']);
+  assert.equal((setupProjectTool?.inputSchema as any).properties.repoPath, undefined);
+  assert.equal((setupProjectTool?.inputSchema as any).properties.runnerPort, undefined);
   assert.match(String(setupProjectTool?.description), /githubUrl must point to a GitHub repository/);
   assert.match(String(setupProjectTool?.description), /describe_project_schema and then register_project/);
   assert.match(String(setupProjectTool?.description), /Partial failures are not automatically rolled back/);
+});
+
+test('MCP setup_project rejects removed repoPath parameter', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb121-setup-schema-'));
+  const configPath = join(cwd, 'registry.yaml');
+
+  try {
+    const runtime = createRuntimeConfig({ env: {}, argv: ['--config', configPath], cwd: process.cwd() });
+    runtime.mcpServices = {
+      createLinearService: () => ({
+        resolveTeam: async () => ({ id: 'team-1', key: 'MRB', name: 'MRB' }),
+        findProjectByNameForTeam: async () => undefined,
+        createProject: async () => ({ id: 'project-1', name: 'Dummy', slugId: 'dummy', url: 'https://linear.example/project/dummy', teamId: 'team-1' }),
+        resolveProjectForTeam: async () => undefined
+      } as never)
+    };
+
+    const response = await handleMcpMessage({
+      jsonrpc: '2.0',
+      id: 'setup-repo-path',
+      method: 'tools/call',
+      params: {
+        name: 'setup_project',
+        arguments: {
+          name: 'Dummy',
+          teamKey: 'MRB',
+          githubUrl: 'https://github.com/org/repo.git',
+          repoPath: '/tmp/repo'
+        }
+      }
+    }, runtime);
+
+    const result = response?.result as Record<string, unknown>;
+    const structured = result.structuredContent as Record<string, any>;
+    assert.equal(result.isError, true);
+    assert.equal(structured.status, 'error');
+    assert.equal(structured.error.code, 'invalid_input');
+    assert.equal(structured.error.details.field, 'repoPath');
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
 });
 
 test('MCP describe_project_schema returns register_project guidance and template', async () => {

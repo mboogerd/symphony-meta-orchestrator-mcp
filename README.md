@@ -133,14 +133,13 @@ and validate Linear-specific registry fields.
 ### Guided MCP project setup
 
 The MCP `setup_project` tool provides the managed-project happy path in one
-call. It accepts `name`, `teamKey`, required `githubUrl`, `runnerPort`,
-optional `workspaceRoot`, optional `logsRoot`, optional `linearProjectId`,
-optional runner configuration (`runnerCommand`, `runnerArgs`, and `runnerCwd`),
-and optional `startRunner`.
+call. It requires only `name`, `teamKey`, and `githubUrl`, and accepts optional
+`linearProjectId` and `startRunner`.
 The tool resolves the Linear team, attaches an existing same-name Linear project
 in that team or creates one when none exists, validates any supplied Linear
-project belongs to that team, resolves or bootstraps the runner, stores a
-registry entry with the documented defaults, renders `WORKFLOW.md`, and starts
+project belongs to that team, resolves workspace and logs paths, resolves or
+bootstraps the runner, stores a registry entry with the documented defaults,
+renders `WORKFLOW.md`, and starts
 the runner when requested.
 
 When omitted, `workspaceRoot` resolves to
@@ -149,14 +148,11 @@ When omitted, `workspaceRoot` resolves to
 `$DEFAULT_SYMPHONY_LOGS/<project-slug>` or
 `<os.tmpdir()>/symphony-logs/<project-slug>`.
 
-When `runnerCommand` is provided, `setup_project` uses it for the managed
-project's Symphony runner command. `runnerArgs` defaults to the unattended
-guardrail acknowledgement flag when omitted, and `runnerCwd` defaults to the MCP
-server working directory. Without an explicit `runnerCommand`, the tool first
-honors `SYMPHONY_RUNNER_COMMAND`, and finally bootstraps a managed Symphony checkout. The
-managed checkout source defaults to the built-in repository URL and can be
-overridden with `SYMPHONY_RUNNER_REPOSITORY`; the install directory can be
-overridden with `SYMPHONY_RUNNER_INSTALL_DIR`.
+Runner resolution honors `SYMPHONY_RUNNER_COMMAND`, and otherwise bootstraps a
+managed Symphony checkout. The managed checkout source defaults to
+`https://github.com/openai/symphony.git` and can be overridden with
+`SYMPHONY_RUNNER_REPOSITORY`; the install directory can be overridden with
+`SYMPHONY_RUNNER_INSTALL_DIR`.
 
 The response includes `setup.project`, `setup.linearProject`, `setup.team`,
 `setup.workflow`, optional `setup.runner`, and ordered `setup.steps`. If a later
