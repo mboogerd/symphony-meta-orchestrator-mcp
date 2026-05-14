@@ -500,7 +500,7 @@ function mockLinearClient(calls: Array<{ method: string; input: Record<string, u
     },
     async createIssueRelation(input) {
       calls.push({ method: 'createIssueRelation', input });
-      return { relation: { id: 'relation-1', type: 'blocks' } };
+      return { issueRelation: { id: 'relation-1', type: 'blocks' } };
     },
     async updateIssue(id, input) {
       calls.push({ method: 'updateIssue', input: { id, ...input } });

@@ -33,7 +33,7 @@ function fakeClient(overrides: Partial<LinearSdkClient> = {}): LinearSdkClient {
       };
     },
     async createIssueRelation() {
-      return { relation: { id: 'relation-1', type: 'blocks' } };
+      return { issueRelation: { id: 'relation-1', type: 'blocks' } };
     },
     async updateIssue() {
       return { issue: { id: 'issue-1', identifier: 'MRB-1', url: 'https://linear.app/acme/issue/MRB-1/test' } };
@@ -338,7 +338,7 @@ test('Linear service creates planned issue batch and dependencies by stable keys
       },
       async createIssueRelation(input) {
         relations.push(input);
-        return { relation: { id: `relation-${relations.length}`, type: 'blocks' } };
+        return { issueRelation: { id: `relation-${relations.length}`, type: 'blocks' } };
       },
       async workflowStates(variables) {
         const filter = variables?.filter as { name?: { eq?: string } };
@@ -368,7 +368,7 @@ test('Linear service links dependencies only when both issues belong to managed 
     client: fakeClient({
       async createIssueRelation(input) {
         relations.push(input);
-        return { relation: { id: 'relation-1', type: 'blocks' } };
+        return { issueRelation: { id: 'relation-1', type: 'blocks' } };
       }
     })
   });
@@ -635,7 +635,7 @@ test('Linear service creates deterministic dependency links', async () => {
     client: fakeClient({
       async createIssueRelation(input) {
         calls.push(input);
-        return { relation: { id: 'relation-1', type: 'blocks' } };
+        return { issueRelation: { id: 'relation-1', type: 'blocks' } };
       }
     })
   });
@@ -649,7 +649,7 @@ test('Linear service resolves lazy dependency relation accessors', async () => {
   const service = createLinearService({
     client: fakeClient({
       async createIssueRelation() {
-        return { relation: async () => ({ id: 'relation-1', type: 'blocks' }) };
+        return { issueRelation: async () => ({ id: 'relation-1', type: 'blocks' }) };
       }
     })
   });
@@ -678,7 +678,7 @@ test('Linear service smoke creates project, issue batch, and dependency link', a
       },
       async createIssueRelation(input) {
         calls.dependencies.push(input);
-        return { relation: { id: 'relation-1', type: 'blocks' } };
+        return { issueRelation: { id: 'relation-1', type: 'blocks' } };
       }
     })
   });
