@@ -14,8 +14,17 @@ export type ManagedProject = {
   name: string;
   enabled?: boolean;
   githubUrl: string;
+  tracker?: TrackerConfig;
   workflow: WorkflowConfig;
   codex: CodexPolicyConfig;
+};
+
+export type TrackerConfig = {
+  kind: 'linear';
+  teamKey: string;
+  teamId: string;
+  projectId: string;
+  projectSlug: string;
 };
 
 export type WorkflowConfig =
@@ -77,6 +86,7 @@ export type RegistryProject = ManagedProject;
 export type ManagedProjectPatch = Partial<Omit<ManagedProject, 'workflow' | 'codex'>> & {
   workflow?: Partial<WorkflowConfig>;
   codex?: Partial<CodexPolicyConfig>;
+  tracker?: Partial<TrackerConfig>;
 };
 
 export type ProjectRegistryService = {
@@ -158,6 +168,13 @@ export const managedProjectSchema = z.object({
   name: nonEmptyString,
   enabled: z.boolean().optional(),
   githubUrl: nonEmptyString,
+  tracker: z.object({
+    kind: z.literal('linear'),
+    teamKey: nonEmptyString,
+    teamId: nonEmptyString,
+    projectId: nonEmptyString,
+    projectSlug: nonEmptyString
+  }).strict().optional(),
   workflow: z.discriminatedUnion('source', [
     z.object({
       source: z.literal('repo'),
@@ -334,7 +351,7 @@ function attachRuntimeHints(project: Record<string, unknown>, registryDir: strin
   const repoPath = join(registryDir, 'repo');
   const command = process.env.SYMPHONY_RUNNER_COMMAND?.trim();
 
-  Object.defineProperties(project, {
+  const runtimeHints: PropertyDescriptorMap = {
     repo: {
       enumerable: false,
       value: {
@@ -352,7 +369,9 @@ function attachRuntimeHints(project: Record<string, unknown>, registryDir: strin
         logsRoot
       }
     }
-  });
+  };
+
+  Object.defineProperties(project, runtimeHints);
 }
 
 export function normalizeCodexTurnSandboxPolicy(value: unknown): unknown {
@@ -401,11 +420,24 @@ function mergeProject(existing: ManagedProject, patch: ManagedProjectPatch): Man
   const merged = {
     ...existing,
     ...patch,
+    tracker: patch.tracker === undefined ? existing.tracker : mergeTracker(existing, patch.tracker),
     workflow: { ...existing.workflow, ...patch.workflow } as WorkflowConfig,
     codex: { ...existing.codex, ...patch.codex }
   };
   copyNonEnumerableProjectProperties(existing, merged);
   return omitDefaultEnabled(merged);
+}
+
+function mergeTracker(existing: ManagedProject, patch: Partial<TrackerConfig>): TrackerConfig {
+  return {
+    kind: 'linear',
+    teamKey: 'MRB',
+    teamId: 'linear-team-id',
+    projectId: existing.id,
+    projectSlug: existing.id,
+    ...existing.tracker,
+    ...patch
+  };
 }
 
 function registryForYaml(registry: ManagedProjectRegistry): ManagedProjectRegistry {

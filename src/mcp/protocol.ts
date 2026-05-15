@@ -93,6 +93,11 @@ export async function handleMcpMessage(message: unknown, runtime: McpRuntimeConf
           tool('list_projects', 'List managed projects from the local registry.', {}),
           tool('get_project', 'Get one managed project from the local registry.', { projectId: stringSchema() }, ['projectId']),
           tool('register_project', 'Register a complete managed project object in the local registry. If you need the required shape, call describe_project_schema first; for guided defaults, prefer setup_project.', { project: projectSchema() }, ['project']),
+          tool('relink_project', 'Update the Linear project linkage for an existing managed project without creating a duplicate registry entry.', {
+            projectId: stringSchema(),
+            linearProjectId: stringSchema(),
+            linearProjectSlug: stringSchema()
+          }, ['projectId', 'linearProjectId', 'linearProjectSlug']),
           tool('describe_project_schema', 'Return guidance and an annotated example object for register_project.', {}),
           tool('validate_project', 'Validate one project or all registry projects and workflow setup.', {
             projectId: stringSchema(),
@@ -231,6 +236,16 @@ async function handleToolCall(message: JsonRpcRequest, runtime: McpRuntimeConfig
     if (name === 'register_project') {
       const project = readProject(argumentsValue.project);
       return toolResult(message.id ?? null, { project: await registry.create(project) });
+    }
+
+    if (name === 'relink_project') {
+      const project = await registry.update(requiredString(argumentsValue.projectId, 'projectId'), {
+        tracker: {
+          projectId: requiredString(argumentsValue.linearProjectId, 'linearProjectId'),
+          projectSlug: requiredString(argumentsValue.linearProjectSlug, 'linearProjectSlug')
+        }
+      });
+      return toolResult(message.id ?? null, { project });
     }
 
     if (name === 'describe_project_schema') {
