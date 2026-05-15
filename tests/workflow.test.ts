@@ -61,6 +61,29 @@ test('repo-owned workflow preserves prompt body and injects runtime front matter
   }
 });
 
+test('workflow front matter uses Linear project slug when it differs from registry id', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb139-workflow-slug-'));
+  const repoPath = join(cwd, 'repo');
+  const workspaceRoot = join(cwd, 'workspace');
+  const logsRoot = join(cwd, 'logs');
+
+  try {
+    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
+    writeFileSync(join(repoPath, 'WORKFLOW.md'), 'Prompt body.');
+
+    const project = managedProject({ repoPath, workspaceRoot, logsRoot });
+    project.id = 'dummy';
+    project.tracker.projectSlug = 'dummy-bc9511ed1883';
+
+    const workflow = await writeProjectWorkflow(project, mockRepoWorkflowOptions(project));
+    const parsed = parseWorkflow(workflow.content);
+
+    assert.equal(parsed.frontMatter.tracker.project_slug, 'dummy-bc9511ed1883');
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test('writeProjectWorkflow renders when runner port is occupied', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'mrb24-workflow-port-'));
   const repoPath = join(cwd, 'repo');
