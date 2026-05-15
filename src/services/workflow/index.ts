@@ -750,12 +750,15 @@ function mergeWorkflowFrontMatter(
   workspaceRoot: string
 ): Record<string, unknown> {
   const runtime = project.workflow.runtime;
+  const legacyProject = project as ManagedProject & { tracker?: { projectSlug?: string } };
+  const projectSlug = legacyProject.tracker?.projectSlug?.trim() || project.id;
+
   return {
     ...existing,
     tracker: {
       ...readRecord(existing.tracker),
       kind: 'linear',
-      project_slug: project.id,
+      project_slug: projectSlug,
       active_states: runtime?.tracker?.activeStates ?? DEFAULT_ACTIVE_STATES,
       terminal_states: runtime?.tracker?.terminalStates ?? DEFAULT_TERMINAL_STATES
     },
