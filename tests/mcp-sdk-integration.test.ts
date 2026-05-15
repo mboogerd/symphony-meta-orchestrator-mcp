@@ -127,7 +127,7 @@ test('SDK MCP Linear planning tools use mocked service boundaries', async () => 
 
   try {
     const runtime = runtimeFor(fixture.configPath, {
-      createLinearService: () => new LinearService({ client: mockLinearClient(calls) })
+      createLinearService: () => new LinearService({ client: mockLinearClient(calls), projectCache: mockProjectCache() })
     });
     runtime.env.LINEAR_TEAM_KEY = 'MRB';
     const sdk = await createSdkHarness(runtime);
@@ -393,6 +393,17 @@ function createProjectFixture(prefix: string) {
     project,
     cleanup: () => rmSync(root, { recursive: true, force: true })
   };
+}
+
+function mockProjectCache() {
+  return {
+    resolve: async () => ({
+      teamId: 'linear-team-id',
+      teamKey: 'MRB',
+      projectId: 'linear-project-id',
+      projectSlug: 'meta-orchestrator-slug'
+    })
+  } as never;
 }
 
 function runtimeFor(configPath: string, services: NonNullable<McpServerRuntimeConfig['mcpServices']> = {}): McpServerRuntimeConfig {

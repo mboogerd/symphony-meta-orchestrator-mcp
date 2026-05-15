@@ -99,7 +99,7 @@ test('MCP integration creates planned Backlog issues and Linear dependencies wit
 
   try {
     const runtime = runtimeFor(fixture.configPath, {
-      createLinearService: () => new LinearService({ client })
+      createLinearService: () => new LinearService({ client, projectCache: mockProjectCache() })
     });
     runtime.env.LINEAR_TEAM_KEY = 'MRB';
     await callTool(runtime, 'register', 'register_project', { project: fixture.project });
@@ -898,6 +898,17 @@ function createProjectFixture(prefix: string, options: { writeWorkflow?: boolean
     project,
     cleanup: () => rmSync(root, { recursive: true, force: true })
   };
+}
+
+function mockProjectCache() {
+  return {
+    resolve: async () => ({
+      teamId: 'linear-team-id',
+      teamKey: 'MRB',
+      projectId: 'linear-project-id',
+      projectSlug: 'meta-orchestrator-slug'
+    })
+  } as never;
 }
 
 function configureGitOrigin(repoPath: string): void {

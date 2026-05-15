@@ -344,16 +344,6 @@ function attachRuntimeHints(project: Record<string, unknown>, registryDir: strin
         cloneSource: project.githubUrl
       }
     },
-    tracker: {
-      enumerable: false,
-      value: {
-        kind: 'linear',
-        teamKey: process.env.SYMPHONY_LINEAR_TEAM_KEY ?? process.env.LINEAR_TEAM_KEY ?? 'MRB',
-        teamId: 'linear-team-id',
-        projectId: 'linear-project-id',
-        projectSlug: project.id
-      }
-    },
     symphony: {
       enumerable: false,
       value: {
