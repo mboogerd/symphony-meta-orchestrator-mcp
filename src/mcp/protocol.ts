@@ -6,7 +6,7 @@ import { setupManagedProject, setupProjectRecovery, type RunnerBootstrapper } fr
 import { createProjectRegistryService, ProjectRegistryValidationError, type ManagedProject } from '../services/registry/index.ts';
 import { projectSchemaErrorDetails, projectSchemaHelp } from '../services/registry/schema-help.ts';
 import { createRunnerManager, type RunnerManager } from '../services/runner/index.ts';
-import { validateProjectWorkflowSetups, WorkflowSetupValidationError, writeProjectWorkflow, type PortAvailabilityProbe, type WorkflowSetupValidationPhase } from '../services/workflow/index.ts';
+import { validateProjectWorkflowSetups, WorkflowSetupValidationError, writeProjectWorkflow, type PortAvailabilityProbe, type WorkflowSetupValidationOptions, type WorkflowSetupValidationPhase } from '../services/workflow/index.ts';
 import { setupProjectDescription } from './tool-descriptions.ts';
 
 // Compatibility JSON-RPC harness retained for direct unit tests and parity checks.
@@ -34,6 +34,7 @@ export type McpRuntimeServices = {
   createRunnerManager?: (runtime: RuntimeConfig) => RunnerManager;
   runnerBootstrap?: RunnerBootstrapper;
   portAvailable?: PortAvailabilityProbe;
+  workflowOptions?: WorkflowSetupValidationOptions;
 };
 
 export type McpRuntimeConfig = RuntimeConfig & {
@@ -266,13 +267,14 @@ async function handleToolCall(message: JsonRpcRequest, runtime: McpRuntimeConfig
         validateLinear: argumentsValue.validateLinear === true,
         linear: argumentsValue.validateLinear === true ? linear(runtime) : undefined,
         env: runtime.env,
+        ...runtime.mcpServices?.workflowOptions,
         portAvailable: runtime.mcpServices?.portAvailable
       });
       return toolResult(message.id ?? null, { setup }, setup.some((validation) => !validation.ok));
     }
 
     if (name === 'generate_workflow') {
-      return toolResult(message.id ?? null, { workflow: await writeProjectWorkflow(await requireProject(runtime, argumentsValue.projectId)) });
+      return toolResult(message.id ?? null, { workflow: await writeProjectWorkflow(await requireProject(runtime, argumentsValue.projectId), { ...runtime.mcpServices?.workflowOptions, env: runtime.env }) });
     }
 
     if (name === 'create_linear_project') {
@@ -300,6 +302,7 @@ async function handleToolCall(message: JsonRpcRequest, runtime: McpRuntimeConfig
         registry,
         runnerManager: runnerManager(runtime),
         runnerBootstrap: runtime.mcpServices?.runnerBootstrap,
+        workflowOptions: runtime.mcpServices?.workflowOptions,
         env: runtime.env
       });
       const isError = setup.steps.some((step) => step.status === 'error');
@@ -650,7 +653,6 @@ function projectSchema() {
         properties: {
           source: stringSchema(),
           path: stringSchema(),
-          template: stringSchema(),
           runtime: {
             type: 'object',
             properties: {

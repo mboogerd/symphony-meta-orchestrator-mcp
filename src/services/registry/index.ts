@@ -28,14 +28,10 @@ export type TrackerConfig = {
 };
 
 export type WorkflowConfig =
-  | ({
-      source: 'repo';
-      path: string;
-    } & WorkflowRuntimeConfig)
-  | ({
-      source: 'generated';
-      template: string;
-    } & WorkflowRuntimeConfig);
+  {
+    source: 'repo';
+    path: string;
+  } & WorkflowRuntimeConfig;
 
 export type WorkflowRuntimeConfig = {
   runtime?: {
@@ -179,10 +175,6 @@ export const managedProjectSchema = z.object({
     z.object({
       source: z.literal('repo'),
       path: nonEmptyString
-    }).merge(workflowRuntimeSchema).strict(),
-    z.object({
-      source: z.literal('generated'),
-      template: nonEmptyString
     }).merge(workflowRuntimeSchema).strict()
   ]),
   codex: z.object({

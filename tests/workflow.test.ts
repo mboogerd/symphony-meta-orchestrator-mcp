@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -111,7 +111,7 @@ test('writeProjectWorkflow renders when runner port is occupied', async () => {
   }
 });
 
-test('writeProjectWorkflow bootstraps missing repo-owned workflow path', async () => {
+test('loadWorkflowTemplate throws workflow_missing_in_repo when WORKFLOW.md absent from repo', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'mrb79-workflow-bootstrap-'));
   const repoPath = join(cwd, 'repo');
   const logsRoot = join(cwd, 'logs');
@@ -120,14 +120,19 @@ test('writeProjectWorkflow bootstraps missing repo-owned workflow path', async (
     spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
 
     const project = managedProject({ repoPath, workspaceRoot: repoPath, logsRoot });
-    const workflow = await writeProjectWorkflow(project, mockRepoWorkflowOptions(project));
-    const parsed = parseWorkflow(workflow.content);
+    await assert.rejects(
+      writeProjectWorkflow(project, mockRepoWorkflowOptions(project)),
+      (error: unknown) => {
+        assert.equal(error instanceof Error, true);
+        assert.match((error as Error).message, /WORKFLOW\.md was not found at `WORKFLOW\.md` in the repository/);
+        return true;
+      }
+    );
 
-    assert.equal(workflow.workflowPath, join(repoPath, 'WORKFLOW.md'));
-    assert.equal(existsSync(workflow.workflowPath), true);
-    assert.equal(parsed.frontMatter.tracker.kind, 'linear');
-    assert.equal(parsed.frontMatter.workspace.root, repoPath);
-    assert.match(parsed.body, /You are working on a Linear ticket/);
+    const validation = await validateProjectWorkflowSetup(project, mockRepoWorkflowOptions(project));
+    assert.equal(validation.ok, false);
+    assert.equal(validation.subsystems.workflow.errors[0]?.code, 'workflow_missing_in_repo');
+    assert.match(validation.subsystems.workflow.errors[0]?.message ?? '', /Add a WORKFLOW\.md to the repository root/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -214,99 +219,6 @@ test('workflow renders custom tracker, agent, Codex command, and hook settings',
     assert.equal(parsed.frontMatter.codex.approval_policy, 'on-request');
     assert.equal(parsed.frontMatter.hooks.after_create, 'true');
     assert.equal(parsed.frontMatter.hooks.before_remove, 'rm -rf .cache');
-  } finally {
-    rmSync(cwd, { recursive: true, force: true });
-  }
-});
-
-test('generated workflow renders valid Symphony front matter and prompt body', async () => {
-  const cwd = mkdtempSync(join(tmpdir(), 'mrb15-workflow-generated-'));
-  const repoPath = join(cwd, 'repo');
-  const workspaceRoot = join(cwd, 'workspace');
-  const logsRoot = join(cwd, 'logs');
-
-  try {
-    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
-    const project = managedProject({ repoPath, workspaceRoot, logsRoot });
-    project.workflow = { source: 'generated', template: 'default' };
-
-    const workflow = await renderProjectWorkflow(project);
-    const parsed = parseWorkflow(workflow.content);
-
-    assert.equal(workflow.workflowPath, join(workspaceRoot, 'WORKFLOW.md'));
-    assert.equal(parsed.frontMatter.tracker.kind, 'linear');
-    assert.equal(parsed.frontMatter.workspace.root, workspaceRoot);
-    assert.equal(parsed.frontMatter.hooks.after_create, 'git clone git@github.com:mboogerd/symphony-meta-orchestrator-mcp.git .');
-    assert.match(parsed.body, /You are working on a Linear ticket/);
-  } finally {
-    rmSync(cwd, { recursive: true, force: true });
-  }
-});
-
-test('generated workflow clones the registered githubUrl into the workspace root', async () => {
-  const cwd = mkdtempSync(join(tmpdir(), 'mrb121-workflow-github-url-'));
-  const workspaceRoot = join(cwd, 'workspace');
-  const logsRoot = join(cwd, 'logs');
-  const githubUrl = 'https://github.com/org/repo.git';
-
-  try {
-    const project = {
-      id: 'github-url-project',
-      name: 'GitHub URL Project',
-      githubUrl,
-      workflow: { source: 'generated', template: 'default' },
-      codex: {
-        threadSandbox: 'workspace-write',
-        turnSandbox: { type: 'workspaceWrite', networkAccess: true }
-      }
-    } as const;
-    Object.defineProperty(project, 'symphony', {
-      enumerable: false,
-      value: { workspaceRoot, logsRoot }
-    });
-
-    const parsed = parseWorkflow((await renderProjectWorkflow(project, mockRepoWorkflowOptions(project))).content);
-
-    assert.equal(parsed.frontMatter.hooks.after_create, `git clone ${githubUrl} .`);
-  } finally {
-    rmSync(cwd, { recursive: true, force: true });
-  }
-});
-
-test('generated workflow validation does not require repo path to exist', async () => {
-  const cwd = mkdtempSync(join(tmpdir(), 'mrb80-generated-missing-repo-'));
-  const repoPath = join(cwd, 'missing-repo');
-  const workspaceRoot = join(cwd, 'workspace');
-  const logsRoot = join(cwd, 'logs');
-
-  try {
-    const project = managedProject({ repoPath, workspaceRoot, logsRoot });
-    project.workflow = { source: 'generated', template: 'default' };
-
-    const validation = await validateProjectWorkflowSetup(project);
-
-    assert.equal(validation.ok, true);
-    assert.equal(existsSync(repoPath), false);
-    assert.deepEqual(validation.subsystems.repo.errors, []);
-    assert.ok(validation.workflow);
-  } finally {
-    rmSync(cwd, { recursive: true, force: true });
-  }
-});
-
-test('repo-owned workflow falls back when template path is missing', async () => {
-  const cwd = mkdtempSync(join(tmpdir(), 'mrb15-workflow-missing-'));
-  const repoPath = join(cwd, 'repo');
-  const workspaceRoot = join(cwd, 'workspace');
-  const logsRoot = join(cwd, 'logs');
-
-  try {
-    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
-    const project = managedProject({ repoPath, workspaceRoot, logsRoot });
-    const validation = await validateProjectWorkflowSetup(project, mockRepoWorkflowOptions(project));
-
-    assert.equal(validation.ok, true);
-    assert.match(validation.workflow?.content ?? '', /You are working on a Linear ticket/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -643,52 +555,6 @@ test('uses fetched repo WORKFLOW.md when present', async () => {
     const parsed = parseWorkflow((await renderProjectWorkflow(project, mockRepoWorkflowOptions(project))).content);
 
     assert.equal(parsed.body, 'Fetched repo prompt.');
-  } finally {
-    rmSync(cwd, { recursive: true, force: true });
-  }
-});
-
-test('falls back to Symphony shipped default when repo file absent', async () => {
-  const cwd = mkdtempSync(join(tmpdir(), 'mrb124-shipped-workflow-'));
-  const repoPath = join(cwd, 'repo');
-  const installDir = join(cwd, 'symphony');
-  const logs: Array<{ message: string; fields?: Record<string, unknown> }> = [];
-  try {
-    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
-    mkdirSync(join(installDir, 'elixir'), { recursive: true });
-    writeFileSync(join(installDir, 'elixir', 'WORKFLOW.md'), 'Shipped default prompt.');
-    const project = managedProject({ repoPath, workspaceRoot: join(cwd, 'workspace'), logsRoot: join(cwd, 'logs') });
-
-    const parsed = parseWorkflow((await renderProjectWorkflow(project, {
-      ...mockRepoWorkflowOptions(project),
-      env: { SYMPHONY_RUNNER_INSTALL_DIR: installDir },
-      logger: captureInfo(logs)
-    })).content);
-
-    assert.equal(parsed.body, 'Shipped default prompt.');
-    assert.equal(logs.some((entry) => entry.fields?.source === 'repo'), true);
-    assert.equal(logs.some((entry) => entry.fields?.source === 'symphony_shipped_default'), true);
-  } finally {
-    rmSync(cwd, { recursive: true, force: true });
-  }
-});
-
-test('falls back to built-in default when neither source available', async () => {
-  const cwd = mkdtempSync(join(tmpdir(), 'mrb124-builtin-workflow-'));
-  const repoPath = join(cwd, 'repo');
-  const logs: Array<{ message: string; fields?: Record<string, unknown> }> = [];
-  try {
-    spawnSync('git', ['init', repoPath], { encoding: 'utf8' });
-    const project = managedProject({ repoPath, workspaceRoot: join(cwd, 'workspace'), logsRoot: join(cwd, 'logs') });
-
-    const parsed = parseWorkflow((await renderProjectWorkflow(project, {
-      ...mockRepoWorkflowOptions(project),
-      env: { SYMPHONY_RUNNER_INSTALL_DIR: join(cwd, 'missing-symphony') },
-      logger: captureInfo(logs)
-    })).content);
-
-    assert.match(parsed.body, /You are working on a Linear ticket/);
-    assert.equal(logs.some((entry) => entry.fields?.source === 'built_in_default'), true);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

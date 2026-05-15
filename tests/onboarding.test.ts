@@ -144,7 +144,8 @@ test('setupManagedProject derives repo fields and default roots from githubUrl',
           return project as never;
         }
       } as never,
-      runnerManager: { start: async () => ({}) } as never
+      runnerManager: { start: async () => ({}) } as never,
+      workflowOptions: repoWorkflowOptions()
     });
 
     assert.equal(result.steps.map((step) => `${step.name}:${step.status}`).join(','), 'linearProject:ok,bootstrap:ok,registry:ok,workflow:ok,runner:skipped');
@@ -171,7 +172,8 @@ test('setupManagedProject falls back to OS temp roots when roots are omitted', a
       load: async () => ({ version: 3, projects: [] }),
       create: async (project: unknown) => project as never
     } as never,
-    runnerManager: { start: async () => ({}) } as never
+    runnerManager: { start: async () => ({}) } as never,
+    workflowOptions: repoWorkflowOptions()
   });
 
   assert.equal(result.project?.symphony.workspaceRoot, join(tmpdir(), 'symphony-workspaces', 'temp-root-project'));
@@ -186,7 +188,7 @@ test('setupManagedProject reuses an existing same-name Linear project before cre
   const result = await setupManagedProject({
     name: 'Reusable Project',
     teamKey: 'MRB',
-    githubUrl: 'https://github.com/mboogerd/reusable-project.git'
+    githubUrl: 'https://github.com/mboogerd/symphony-meta-orchestrator-mcp.git'
   }, {
     env: { SYMPHONY_RUNNER_COMMAND: 'node' },
     linear: {
@@ -210,7 +212,8 @@ test('setupManagedProject reuses an existing same-name Linear project before cre
       load: async () => ({ version: 3, projects: [] }),
       create: async (project: unknown) => project as never
     } as never,
-    runnerManager: { start: async () => ({}) } as never
+    runnerManager: { start: async () => ({}) } as never,
+    workflowOptions: repoWorkflowOptions()
   });
 
   assert.equal(findProjectCalls, 1);
@@ -410,7 +413,8 @@ test('setupManagedProject resumes an existing registry project with Linear linka
           throw new Error('registry create should not be called');
         }
       } as never,
-      runnerManager: { start: async () => ({}) } as never
+      runnerManager: { start: async () => ({}) } as never,
+      workflowOptions: repoWorkflowOptions()
     });
 
     assert.equal(createProjectCalls, 0);
@@ -477,7 +481,8 @@ test('setupManagedProject recovers stale registry Linear linkage with explicit p
           throw new Error('registry create should not be called');
         }
       } as never,
-      runnerManager: { start: async () => ({}) } as never
+      runnerManager: { start: async () => ({}) } as never,
+      workflowOptions: repoWorkflowOptions()
     });
 
     assert.deepEqual(resolvedProjectIds, ['replacement-linear-project']);
@@ -540,7 +545,8 @@ test('setupManagedProject recovers stale registry Linear linkage with project na
           throw new Error('registry create should not be called');
         }
       } as never,
-      runnerManager: { start: async () => ({}) } as never
+      runnerManager: { start: async () => ({}) } as never,
+      workflowOptions: repoWorkflowOptions()
     });
 
     assert.equal(createProjectCalls, 0);
@@ -635,12 +641,19 @@ function fakeLinear() {
   } as never;
 }
 
+function repoWorkflowOptions() {
+  return {
+    fetch: async () => Response.json({ default_branch: 'main' }),
+    sparseCloneWorkflowFile: async () => 'Prompt body.'
+  };
+}
+
 function managedProject(input: { id: string; githubUrl: string; linearProjectId?: string }) {
   const project = {
     id: input.id,
     name: 'Dummy Project',
     githubUrl: input.githubUrl,
-    workflow: { source: 'generated', template: 'default' },
+    workflow: { source: 'repo', path: 'WORKFLOW.md' },
     codex: {
       threadSandbox: 'workspace-write',
       turnSandbox: { type: 'workspaceWrite', networkAccess: true }

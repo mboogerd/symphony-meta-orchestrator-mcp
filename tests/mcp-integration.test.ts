@@ -255,7 +255,7 @@ test('MCP integration sets up a managed project end-to-end with defaults', async
     const defaultWorkspace = join(tmpdir(), 'symphony-workspaces', 'dummy-project');
     assert.match(readFileSync(join(defaultWorkspace, 'WORKFLOW.md'), 'utf8'), /project_slug: dummy-project/);
     assert.match(readFileSync(join(defaultWorkspace, 'WORKFLOW.md'), 'utf8'), /after_create: git clone https:\/\/github\.com\/mboogerd\/symphony-meta-orchestrator-mcp\.git ./);
-    assert.deepEqual(payload.setup.project.workflow, { source: 'generated', template: 'default' });
+    assert.deepEqual(payload.setup.project.workflow, { source: 'repo', path: 'WORKFLOW.md' });
     assert.equal(payload.setup.project.githubUrl, fixture.project.repo.remoteUrl);
     assert.equal(payload.setup.project.repo, undefined);
     assert.equal(payload.setup.project.symphony.command, join(process.cwd(), 'test-symphony', 'elixir', '_build', 'prod', 'rel', 'symphony', 'bin', 'symphony'));
@@ -622,7 +622,7 @@ test('MCP integration does not create or require a local repo during project set
   }
 });
 
-test('MCP integration bootstraps missing workflow during generation', async () => {
+test('MCP integration reports missing repo workflow during generation', async () => {
   const fixture = createProjectFixture('mrb20-missing-workflow-', { writeWorkflow: false });
 
   try {
@@ -631,13 +631,13 @@ test('MCP integration bootstraps missing workflow during generation', async () =
 
     const response = await callTool(runtime, 'render', 'generate_workflow', { projectId: fixture.project.id });
 
-    assertJsonRpcOk(response, 'render');
     const result = response.result as Record<string, unknown>;
-    assert.equal(result.isError, false);
+    assert.equal(result.isError, true);
     const payload = toolPayload(response);
-    assert.equal(payload.status, 'ok');
-    assert.equal(payload.workflow.workflowPath, join(fixture.workspacePath, 'WORKFLOW.md'));
-    assert.equal(existsSync(payload.workflow.workflowPath), true);
+    assert.equal(payload.status, 'error');
+    assert.equal(payload.error.code, 'tool_failed');
+    assert.match(payload.error.message, /WORKFLOW\.md was not found/);
+    assert.equal(existsSync(join(fixture.workspacePath, 'WORKFLOW.md')), false);
   } finally {
     fixture.cleanup();
   }
@@ -930,6 +930,10 @@ function runtimeFor(configPath: string, services: NonNullable<Parameters<typeof 
         args: ['--i-understand-that-this-will-be-running-without-the-usual-guardrails'],
         cwd: join(process.cwd(), 'test-symphony', 'elixir')
       }),
+      workflowOptions: {
+        fetch: async () => Response.json({ default_branch: 'main' }),
+        sparseCloneWorkflowFile: async () => 'Prompt body.'
+      },
       ...services
     }
   };
@@ -1077,8 +1081,8 @@ function registryYaml(projectIds: string[]): string {
       `    name: ${projectId}`,
       `    githubUrl: https://github.com/example/${projectId}.git`,
       '    workflow:',
-      '      source: generated',
-      '      template: default',
+      '      source: repo',
+      '      path: WORKFLOW.md',
       '    codex:',
       '      threadSandbox: workspace-write',
       '      turnSandbox:',

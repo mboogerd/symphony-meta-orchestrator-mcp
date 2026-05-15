@@ -18,6 +18,7 @@ import { createRunnerManager, type RunnerManager } from '../services/runner/inde
 import {
   type PortAvailabilityProbe,
   validateProjectWorkflowSetups,
+  type WorkflowSetupValidationOptions,
   type WorkflowSetupValidationPhase,
   WorkflowSetupValidationError,
   writeProjectWorkflow
@@ -53,6 +54,7 @@ export type McpServerServices = {
   createRunnerManager?: (runtime: McpServerRuntimeConfig) => RunnerManager;
   runnerBootstrap?: RunnerBootstrapper;
   portAvailable?: PortAvailabilityProbe;
+  workflowOptions?: WorkflowSetupValidationOptions;
 };
 
 export type McpServerRuntimeConfig = RuntimeConfig & {
@@ -182,6 +184,7 @@ function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void
       validateLinear,
       linear: validateLinear === true ? linear(runtime) : undefined,
       env: runtime.env,
+      ...runtime.mcpServices?.workflowOptions,
       portAvailable: runtime.mcpServices?.portAvailable
     });
     return toolResult({ setup }, setup.some((validation) => !validation.ok));
@@ -191,7 +194,7 @@ function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void
     description: 'Generate WORKFLOW.md for a managed project.',
     inputSchema: { projectId: requiredString }
   }, async ({ projectId }) => withToolErrors(async () => toolResult({
-    workflow: await writeProjectWorkflow(await requireProject(runtime, projectId), { env: runtime.env })
+    workflow: await writeProjectWorkflow(await requireProject(runtime, projectId), { ...runtime.mcpServices?.workflowOptions, env: runtime.env })
   })));
 
   server.registerTool('create_linear_project', {
@@ -233,6 +236,7 @@ function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void
       registry: registry(runtime),
       runnerManager: runnerManager(runtime),
       runnerBootstrap: runtime.mcpServices?.runnerBootstrap,
+      workflowOptions: runtime.mcpServices?.workflowOptions,
       env: runtime.env
     });
     const isError = setup.steps.some((step) => step.status === 'error');
