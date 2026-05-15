@@ -154,16 +154,16 @@ async function resolveResumableLinearProject(
   existingLinearProject: LinearProjectReference,
   teamId: string
 ): Promise<LinearProjectReference> {
+  if (input.linearProjectId !== undefined && input.linearProjectId !== existingLinearProject.id) {
+    return linear.resolveProjectForTeam(input.linearProjectId, teamId);
+  }
+
   try {
     return await linear.resolveProjectForTeam(existingLinearProject.id, teamId);
   } catch (error) {
     if (!isStaleLinearProjectReferenceError(error)) {
       throw error;
     }
-  }
-
-  if (input.linearProjectId !== undefined && input.linearProjectId !== existingLinearProject.id) {
-    return linear.resolveProjectForTeam(input.linearProjectId, teamId);
   }
 
   return await linear.findProjectByNameForTeam(input.name, teamId)

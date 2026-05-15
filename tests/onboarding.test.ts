@@ -480,7 +480,7 @@ test('setupManagedProject recovers stale registry Linear linkage with explicit p
       runnerManager: { start: async () => ({}) } as never
     });
 
-    assert.deepEqual(resolvedProjectIds, ['stale-linear-project', 'replacement-linear-project']);
+    assert.deepEqual(resolvedProjectIds, ['replacement-linear-project']);
     assert.deepEqual(result.steps.map((step) => `${step.name}:${step.status}`), [
       'linearProject:ok',
       'bootstrap:ok',
