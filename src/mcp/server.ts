@@ -142,6 +142,22 @@ function registerTools(server: McpServer, runtime: McpServerRuntimeConfig): void
     inputSchema: { project: managedProjectSchema }
   }, async ({ project }) => withToolErrors(async () => toolResult({ project: await registry(runtime).create(project) })));
 
+  server.registerTool('relink_project', {
+    description: 'Update the Linear project linkage for an existing managed project without creating a duplicate registry entry.',
+    inputSchema: {
+      projectId: requiredString,
+      linearProjectId: requiredString,
+      linearProjectSlug: requiredString
+    }
+  }, async ({ projectId, linearProjectId, linearProjectSlug }) => withToolErrors(async () => toolResult({
+    project: await registry(runtime).update(projectId, {
+      tracker: {
+        projectId: linearProjectId,
+        projectSlug: linearProjectSlug
+      }
+    })
+  })));
+
   server.registerTool('describe_project_schema', {
     description: 'Return guidance and an annotated example object for register_project.'
   }, async () => withToolErrors(async () => toolResult(projectSchemaHelp())));

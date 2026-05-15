@@ -37,6 +37,7 @@ test('MCP tools/list exposes control-plane tools', async () => {
     'list_projects',
     'get_project',
     'register_project',
+    'relink_project',
     'describe_project_schema',
     'validate_project',
     'generate_workflow',
@@ -296,6 +297,55 @@ test('MCP registry tools can register, list, and get projects', async () => {
     }, runtime);
     const fetchedProject = (((fetched?.result as Record<string, unknown>).structuredContent as Record<string, unknown>).project as Record<string, unknown>);
     assert.equal(fetchedProject.name, 'Meta Orchestrator');
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('MCP relink_project updates persisted Linear tracker linkage without duplicating projects', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'mrb138-mcp-relink-'));
+  const configPath = join(cwd, 'registry.yaml');
+  const project = managedProject({ repoPath: join(cwd, 'repo'), workspaceRoot: join(cwd, 'workspace') });
+
+  try {
+    const runtime = createRuntimeConfig({ env: {}, argv: ['--config', configPath], cwd: process.cwd() });
+    const registered = await handleMcpMessage({
+      jsonrpc: '2.0',
+      id: 'register',
+      method: 'tools/call',
+      params: { name: 'register_project', arguments: { project } }
+    }, runtime);
+    assert.equal(((registered?.result as Record<string, unknown>).structuredContent as Record<string, unknown>).status, 'ok');
+
+    const relinked = await handleMcpMessage({
+      jsonrpc: '2.0',
+      id: 'relink',
+      method: 'tools/call',
+      params: {
+        name: 'relink_project',
+        arguments: {
+          projectId: 'meta-orchestrator',
+          linearProjectId: 'replacement-linear-project',
+          linearProjectSlug: 'replacement-linear-project-slug'
+        }
+      }
+    }, runtime);
+
+    const structured = ((relinked?.result as Record<string, unknown>).structuredContent as Record<string, any>);
+    assert.equal(structured.status, 'ok');
+    assert.equal(structured.project.tracker.projectId, 'replacement-linear-project');
+    assert.equal(structured.project.tracker.projectSlug, 'replacement-linear-project-slug');
+
+    const listed = await handleMcpMessage({
+      jsonrpc: '2.0',
+      id: 'list',
+      method: 'tools/call',
+      params: { name: 'list_projects', arguments: {} }
+    }, runtime);
+    const projects = (((listed?.result as Record<string, unknown>).structuredContent as Record<string, any>).projects as any[]);
+    assert.equal(projects.length, 1);
+    assert.equal(projects[0].tracker.projectId, 'replacement-linear-project');
+    assert.equal(projects[0].tracker.projectSlug, 'replacement-linear-project-slug');
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

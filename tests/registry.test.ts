@@ -52,6 +52,36 @@ test('registry creates, persists, loads, lists, and updates YAML managed project
   }
 });
 
+test('registry update persists Linear tracker relinks without adding projects', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'mrb138-registry-relink-'));
+  const configPath = join(cwd, 'symphony.registry.yaml');
+  const registry = createProjectRegistryService(configPath);
+
+  try {
+    await registry.create(baseProject);
+
+    const updated = await registry.update(baseProject.id, {
+      tracker: {
+        projectId: 'replacement-linear-project',
+        projectSlug: 'replacement-linear-slug'
+      }
+    });
+
+    assert.equal(updated.tracker?.kind, 'linear');
+    assert.equal(updated.tracker?.projectId, 'replacement-linear-project');
+    assert.equal(updated.tracker?.projectSlug, 'replacement-linear-slug');
+
+    const loaded = await registry.load();
+    assert.equal(loaded.projects.length, 1);
+    assert.equal(loaded.projects[0]?.tracker?.projectId, 'replacement-linear-project');
+    assert.equal(loaded.projects[0]?.tracker?.projectSlug, 'replacement-linear-slug');
+    assert.match(readFileSync(configPath, 'utf8'), /projectId: replacement-linear-project/);
+    assert.match(readFileSync(configPath, 'utf8'), /projectSlug: replacement-linear-slug/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test('registry round-trips enabled: false correctly', async () => {
   const cwd = await mkdtemp(join(tmpdir(), 'mrb122-registry-disabled-'));
   const configPath = join(cwd, 'symphony.registry.yaml');
