@@ -113,6 +113,25 @@ test('registry runtime hints omit runner command and runnerPort when env does no
   }
 });
 
+test('registry runtime hints do not synthesize Linear tracker data', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'mrb140-registry-tracker-'));
+  const configPath = join(cwd, 'symphony.registry.yaml');
+  const registry = createProjectRegistryService(configPath);
+
+  try {
+    await registry.create(baseProject);
+
+    const project = (await registry.load()).projects[0] as ManagedProject & {
+      tracker?: { projectId?: string; projectSlug?: string };
+    };
+
+    assert.equal(Object.prototype.hasOwnProperty.call(project, 'tracker'), false);
+    assert.equal(project.tracker, undefined);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test('registry runtime hints preserve explicit runner command from env', async () => {
   const cwd = await mkdtemp(join(tmpdir(), 'mrb133-registry-runner-command-'));
   const configPath = join(cwd, 'symphony.registry.yaml');

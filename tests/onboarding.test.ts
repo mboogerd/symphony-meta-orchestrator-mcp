@@ -296,6 +296,40 @@ test('setupManagedProject rejects duplicate registry githubUrl before creating a
   assert.deepEqual(result.steps[0]?.error?.fields, ['githubUrl']);
 });
 
+test('setupManagedProject does not resume duplicate registry entries without Linear linkage', async () => {
+  let resolveProjectForTeamCalls = 0;
+
+  const result = await setupManagedProject({
+    name: 'Dummy Project',
+    teamKey: 'MRB',
+    githubUrl: 'https://github.com/mboogerd/dummy.git'
+  }, {
+    env: { SYMPHONY_RUNNER_COMMAND: 'node' },
+    linear: {
+      ...fakeLinear(),
+      resolveProjectForTeam: async () => {
+        resolveProjectForTeamCalls += 1;
+        throw new Error('resolveProjectForTeam should not be called');
+      }
+    } as never,
+    registry: {
+      load: async () => ({
+        version: 3,
+        projects: [managedProject({ id: 'dummy-project', githubUrl: 'https://github.com/mboogerd/dummy.git' })]
+      }),
+      create: async () => {
+        throw new Error('registry create should not be called');
+      }
+    } as never,
+    runnerManager: { start: async () => ({}) } as never
+  });
+
+  assert.equal(resolveProjectForTeamCalls, 0);
+  assert.deepEqual(result.steps.map((step) => `${step.name}:${step.status}`), ['linearProject:error']);
+  assert.equal(result.steps[0]?.error?.code, 'project_registry_conflict');
+  assert.deepEqual(result.steps[0]?.error?.fields, ['id', 'githubUrl']);
+});
+
 test('setupProjectRecovery guides registry failures after Linear project creation', async () => {
   const input = {
     name: 'Registry Failure Project',
