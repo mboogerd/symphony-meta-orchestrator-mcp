@@ -415,6 +415,10 @@ function runtimeFor(configPath: string, services: NonNullable<McpServerRuntimeCo
         args: ['--i-understand-that-this-will-be-running-without-the-usual-guardrails'],
         cwd: join(process.cwd(), 'test-symphony', 'elixir')
       }),
+      workflowOptions: {
+        fetch: async () => Response.json({ default_branch: 'main' }),
+        sparseCloneWorkflowFile: async () => 'Prompt body.'
+      },
       ...services
     }
   };

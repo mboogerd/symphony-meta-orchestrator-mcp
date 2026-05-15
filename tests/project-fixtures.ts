@@ -63,10 +63,6 @@ export function managedProject(paths: {
 }
 
 export function managedProjectYaml(project: ManagedProject): string {
-  const workflowBody = project.workflow.source === 'repo'
-    ? [`      source: repo`, `      path: ${project.workflow.path}`]
-    : [`      source: generated`, `      template: ${project.workflow.template}`];
-
   return [
     'version: 3',
     'projects:',
@@ -75,7 +71,8 @@ export function managedProjectYaml(project: ManagedProject): string {
     ...(project.enabled === false ? ['    enabled: false'] : []),
     `    githubUrl: ${project.githubUrl}`,
     '    workflow:',
-    ...workflowBody,
+    '      source: repo',
+    `      path: ${project.workflow.path}`,
     '    codex:',
     `      threadSandbox: ${project.codex.threadSandbox}`,
     '      turnSandbox:',

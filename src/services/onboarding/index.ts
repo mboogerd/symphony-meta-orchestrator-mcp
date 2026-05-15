@@ -8,7 +8,7 @@ import type { Environment } from '../../config/env.ts';
 import { LinearServiceError, linearProjectUrlSlug, type LinearProjectReference, type LinearService, type LinearTeamReference } from '../linear/index.ts';
 import type { ManagedProject, ManagedProjectRegistry, ProjectRegistryService } from '../registry/index.ts';
 import type { RunnerManager, RunnerStartResult } from '../runner/index.ts';
-import { writeProjectWorkflow, type WorkflowRenderResult } from '../workflow/index.ts';
+import { writeProjectWorkflow, type WorkflowRenderResult, type WorkflowSetupValidationOptions } from '../workflow/index.ts';
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_SYMPHONY_REPOSITORY = 'https://github.com/openai/symphony.git';
@@ -57,6 +57,7 @@ export type SetupProjectServices = {
   registry: ProjectRegistryService;
   runnerManager: RunnerManager;
   runnerBootstrap?: RunnerBootstrapper;
+  workflowOptions?: WorkflowSetupValidationOptions;
   env?: Environment;
 };
 
@@ -126,7 +127,7 @@ export async function setupManagedProject(input: SetupProjectInput, services: Se
   }
 
   try {
-    workflow = await writeProjectWorkflow(project, { env: services.env });
+    workflow = await writeProjectWorkflow(project, { ...services.workflowOptions, env: services.env });
     steps.push({ name: 'workflow', status: 'ok', output: { workflow } });
   } catch (error) {
     steps.push({ name: 'workflow', status: 'error', error: structuredError(error) });
@@ -389,8 +390,8 @@ async function buildManagedProject(
     name: input.name,
     githubUrl,
     workflow: {
-      source: 'generated',
-      template: 'default'
+      source: 'repo',
+      path: 'WORKFLOW.md'
     },
     codex: {
       threadSandbox: 'workspace-write',

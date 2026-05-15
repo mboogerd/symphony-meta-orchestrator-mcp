@@ -4,14 +4,14 @@ export const projectSchemaGuidance = {
   summary: 'register_project expects a complete managed project object. For guided onboarding, prefer setup_project when Linear project creation/attachment is available.',
   requiredTopLevelFields: ['id', 'name', 'githubUrl', 'workflow', 'codex'],
   validValues: {
-    'workflow.source': ['repo', 'generated'],
+    'workflow.source': ['repo'],
     'codex.threadSandbox': ['read-only', 'workspace-write', 'danger-full-access'],
     'codex.turnSandbox': ['read-only', 'workspace-write', 'danger-full-access', 'custom policy object']
   },
   notes: [
     'Use describe_project_schema to fetch this annotated template from the MCP server.',
     'Use setup_project with name, teamKey, and githubUrl to generate this object from defaults.',
-    'For workflow.source=repo, provide workflow.path. For workflow.source=generated, provide workflow.template.'
+    'For workflow.source=repo, provide workflow.path.'
   ]
 } as const;
 

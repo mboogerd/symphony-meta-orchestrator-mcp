@@ -78,7 +78,7 @@ test('CLI projects list reads managed projects from YAML registry', () => {
   }
 });
 
-test('CLI projects:validate succeeds without local repo path when fallback is available', () => {
+test('CLI projects:validate fails without repo WORKFLOW.md', () => {
   const cwd = mkdtempSync(join(tmpdir(), 'mrb9-cli-invalid-'));
   const configPath = join(cwd, 'registry.yaml');
 
@@ -94,15 +94,16 @@ test('CLI projects:validate succeeds without local repo path when fallback is av
       env: { ...process.env, SYMPHONY_LOG_LEVEL: 'silent' }
     });
 
-    assert.equal(result.status, 0);
+    assert.equal(result.status, 1);
     const output = JSON.parse(result.stdout);
-    assert.equal(output.status, 'ok');
+    assert.equal(output.status, 'invalid');
+    assert.equal(output.setup[0].issues[0].code, 'workflow_missing_in_repo');
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
 });
 
-test('CLI project validate succeeds without local repo path when fallback is available', () => {
+test('CLI project validate fails without repo WORKFLOW.md', () => {
   const cwd = mkdtempSync(join(tmpdir(), 'mrb13-cli-project-invalid-'));
   const configPath = join(cwd, 'registry.yaml');
 
@@ -118,9 +119,10 @@ test('CLI project validate succeeds without local repo path when fallback is ava
       env: { ...process.env, SYMPHONY_LOG_LEVEL: 'silent' }
     });
 
-    assert.equal(result.status, 0);
+    assert.equal(result.status, 1);
     const output = JSON.parse(result.stdout);
-    assert.equal(output.status, 'ok');
+    assert.equal(output.status, 'invalid');
+    assert.equal(output.setup[0].issues[0].code, 'workflow_missing_in_repo');
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

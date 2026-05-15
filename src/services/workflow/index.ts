@@ -2,7 +2,7 @@ import { createServer } from 'node:net';
 import { access, constants, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import YAML from 'yaml';
 import type { Environment } from '../../config/env.ts';
@@ -27,6 +27,7 @@ export type WorkflowSetupIssueCode =
   | 'repo_remote_missing'
   | 'repo_default_branch_missing'
   | 'workflow_path_missing'
+  | 'workflow_missing_in_repo'
   | 'workflow_fetch_auth_required'
   | 'workflow_fetch_failed'
   | 'workspace_root_unavailable'
@@ -515,70 +516,22 @@ const DEFAULT_AGENT_MAX_TURNS = 20;
 const DEFAULT_CODEX_COMMAND = 'codex --config shell_environment_policy.inherit=all app-server';
 const DEFAULT_CODEX_APPROVAL_POLICY = 'never';
 const DEFAULT_WORKFLOW_PATH = 'WORKFLOW.md';
-const DEFAULT_SYMPHONY_INSTALL_PATH = join(homedir(), '.local', 'share', 'symphony-meta-orchestrator', 'symphony');
 
 async function loadWorkflowTemplate(project: ManagedProject, options: WorkflowSetupValidationOptions): Promise<WorkflowTemplate> {
-  if (project.workflow.source === 'generated') {
-    return defaultWorkflowTemplate(project);
-  }
-
   const workflowPath = project.workflow.path ?? DEFAULT_WORKFLOW_PATH;
   const localTemplate = await readLocalRepoWorkflowTemplate(project, workflowPath);
   if (localTemplate !== undefined) {
     if (localTemplate === null) {
-      logWorkflowFallback(options, 'workflow template fallback used', {
-        projectId: project.id,
-        source: 'repo',
-        reason: 'repo workflow file was absent',
-        path: workflowPath
-      });
-    } else {
-      return parseWorkflowTemplate(localTemplate);
+      throw missingWorkflowError(workflowPath);
     }
+    return parseWorkflowTemplate(localTemplate);
   }
 
-  if (localTemplate === undefined) {
-    const repoTemplate = await fetchRepoWorkflowTemplate(project, workflowPath, options);
-    if (repoTemplate !== undefined) {
-      return parseWorkflowTemplate(repoTemplate);
-    }
+  const repoTemplate = await fetchRepoWorkflowTemplate(project, workflowPath, options);
+  if (repoTemplate === undefined) {
+    throw missingWorkflowError(workflowPath);
   }
-
-  const shippedPath = shippedDefaultWorkflowPath(options.env);
-  try {
-    const raw = await readFile(shippedPath, 'utf8');
-    logWorkflowFallback(options, 'workflow template fallback used', {
-      projectId: project.id,
-      source: 'symphony_shipped_default',
-      reason: 'repo workflow file was absent',
-      path: shippedPath
-    });
-    return parseWorkflowTemplate(raw);
-  } catch (error) {
-    if (!isFileNotFoundError(error)) {
-      throw error;
-    }
-  }
-
-  logWorkflowFallback(options, 'workflow template fallback used', {
-    projectId: project.id,
-    source: 'built_in_default',
-    reason: 'repo workflow file and Symphony shipped default were absent',
-    path: shippedPath
-  });
-  return defaultWorkflowTemplate(project);
-}
-
-function defaultWorkflowTemplate(project: ManagedProject): WorkflowTemplate {
-  return {
-    frontMatter: {},
-    body: [
-      `You are working on a Linear ticket \`{{ issue.identifier }}\` for ${project.name}.`,
-      '',
-      'Use the repository cloned into this workspace as the source of truth.',
-      'Keep the Linear issue workpad current and validate changes before handing off.'
-    ].join('\n')
-  };
+  return parseWorkflowTemplate(repoTemplate);
 }
 
 async function readLocalRepoWorkflowTemplate(project: ManagedProject, workflowPath: string): Promise<string | null | undefined> {
@@ -613,12 +566,6 @@ async function fetchRepoWorkflowTemplate(
     return await (options.sparseCloneWorkflowFile ?? sparseCloneWorkflowFile)(githubUrl, workflowPath, defaultBranch);
   } catch (error) {
     if (isFileNotFoundError(error)) {
-      logWorkflowFallback(options, 'workflow template fallback used', {
-        projectId: project.id,
-        source: 'repo',
-        reason: 'repo workflow file was absent',
-        path: workflowPath
-      });
       return undefined;
     }
 
@@ -686,24 +633,21 @@ function parseGithubRepository(githubUrl: string): { owner: string; repo: string
   return { owner: match[1], repo: match[2] };
 }
 
-function shippedDefaultWorkflowPath(env: Environment | undefined): string {
-  return join(resolve(env?.SYMPHONY_RUNNER_INSTALL_DIR ?? process.env.SYMPHONY_RUNNER_INSTALL_DIR ?? DEFAULT_SYMPHONY_INSTALL_PATH), 'elixir', 'WORKFLOW.md');
-}
-
-function logWorkflowFallback(options: WorkflowSetupValidationOptions, message: string, fields: Record<string, unknown>): void {
-  if (options.logger !== undefined) {
-    options.logger.info(message, fields);
-    return;
-  }
-  console.error(JSON.stringify({ level: 'info', message, ...fields }));
+function missingWorkflowError(workflowPath: string): WorkflowFetchError {
+  return new WorkflowFetchError(
+    'workflow_missing_in_repo',
+    'workflow.path',
+    `WORKFLOW.md was not found at \`${workflowPath}\` in the repository. Add a WORKFLOW.md to the repository root before registering this project.`,
+    workflowPath
+  );
 }
 
 class WorkflowFetchError extends Error {
-  readonly code: Extract<WorkflowSetupIssueCode, 'workflow_fetch_auth_required' | 'workflow_fetch_failed'>;
+  readonly code: Extract<WorkflowSetupIssueCode, 'workflow_missing_in_repo' | 'workflow_fetch_auth_required' | 'workflow_fetch_failed'>;
   readonly field: string;
   readonly path?: string;
 
-  constructor(code: Extract<WorkflowSetupIssueCode, 'workflow_fetch_auth_required' | 'workflow_fetch_failed'>, field: string, message: string, path?: string) {
+  constructor(code: Extract<WorkflowSetupIssueCode, 'workflow_missing_in_repo' | 'workflow_fetch_auth_required' | 'workflow_fetch_failed'>, field: string, message: string, path?: string) {
     super(message);
     this.name = 'WorkflowFetchError';
     this.code = code;
