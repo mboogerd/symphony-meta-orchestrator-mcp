@@ -5,7 +5,7 @@ import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { Environment } from '../../config/env.ts';
-import { linearProjectUrlSlug, type LinearProjectReference, type LinearService, type LinearTeamReference } from '../linear/index.ts';
+import { LinearServiceError, linearProjectUrlSlug, type LinearProjectReference, type LinearService, type LinearTeamReference } from '../linear/index.ts';
 import type { ManagedProject, ManagedProjectRegistry, ProjectRegistryService } from '../registry/index.ts';
 import type { RunnerManager, RunnerStartResult } from '../runner/index.ts';
 import { writeProjectWorkflow, type WorkflowRenderResult } from '../workflow/index.ts';
@@ -84,7 +84,7 @@ export async function setupManagedProject(input: SetupProjectInput, services: Se
     if (registryMatch !== undefined) {
       const existingLinearProject = projectLinearReference(registryMatch.project);
       if (registryMatch.resumable && existingLinearProject !== undefined) {
-        linearProject = await services.linear.resolveProjectForTeam(existingLinearProject.id, team.id);
+        linearProject = await resolveResumableLinearProject(input, services.linear, existingLinearProject, team.id);
       } else {
         throw new SetupProjectRegistryConflictError(registryMatch);
       }
@@ -146,6 +146,28 @@ export async function setupManagedProject(input: SetupProjectInput, services: Se
   }
 
   return { team, linearProject, project, workflow, runner, steps };
+}
+
+async function resolveResumableLinearProject(
+  input: SetupProjectInput,
+  linear: LinearService,
+  existingLinearProject: LinearProjectReference,
+  teamId: string
+): Promise<LinearProjectReference> {
+  try {
+    return await linear.resolveProjectForTeam(existingLinearProject.id, teamId);
+  } catch (error) {
+    if (!isStaleLinearProjectReferenceError(error)) {
+      throw error;
+    }
+  }
+
+  if (input.linearProjectId !== undefined && input.linearProjectId !== existingLinearProject.id) {
+    return linear.resolveProjectForTeam(input.linearProjectId, teamId);
+  }
+
+  return await linear.findProjectByNameForTeam(input.name, teamId)
+    ?? await linear.createProject({ name: input.name, teamId });
 }
 
 export function setupProjectRecovery(input: SetupProjectInput, setup: SetupProjectResult): SetupProjectRecovery | undefined {
@@ -572,6 +594,26 @@ function structuredError(error: unknown): Record<string, unknown> {
     name: 'Error',
     message: String(error)
   };
+}
+
+function isStaleLinearProjectReferenceError(error: unknown): boolean {
+  if (error instanceof LinearServiceError) {
+    return error.code === 'project_not_found' || error.code === 'linear_sdk_error';
+  }
+
+  if (error !== null && typeof error === 'object') {
+    const code = (error as Record<string, unknown>).code;
+    if (code === 'project_not_found' || code === 'linear_sdk_error') {
+      return true;
+    }
+  }
+
+  if (error instanceof Error) {
+    return /entity not found:\s*project/i.test(error.message)
+      || /project\b.*\bnot found/i.test(error.message);
+  }
+
+  return false;
 }
 
 function readObjectProperty(value: unknown, key: string): Record<string, unknown> | undefined {

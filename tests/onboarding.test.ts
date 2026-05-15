@@ -430,6 +430,134 @@ test('setupManagedProject resumes an existing registry project with Linear linka
   }
 });
 
+test('setupManagedProject recovers stale registry Linear linkage with explicit project id', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'mrb135-explicit-'));
+  const existingProject = managedProject({
+    id: 'dummy-project',
+    githubUrl: 'https://github.com/mboogerd/dummy.git',
+    linearProjectId: 'stale-linear-project'
+  });
+  const resolvedProjectIds: string[] = [];
+
+  try {
+    const result = await setupManagedProject({
+      name: 'Dummy Project',
+      teamKey: 'MRB',
+      githubUrl: 'https://github.com/mboogerd/dummy.git',
+      linearProjectId: 'replacement-linear-project'
+    }, {
+      env: {
+        SYMPHONY_RUNNER_COMMAND: 'node',
+        DEFAULT_SYMPHONY_WORKSPACES: join(root, 'workspaces'),
+        DEFAULT_SYMPHONY_LOGS: join(root, 'logs')
+      },
+      linear: {
+        ...fakeLinear(),
+        findProjectByNameForTeam: async () => {
+          throw new Error('findProjectByNameForTeam should not be called');
+        },
+        createProject: async () => {
+          throw new Error('createProject should not be called');
+        },
+        resolveProjectForTeam: async (projectId: string) => {
+          resolvedProjectIds.push(projectId);
+          if (projectId === 'stale-linear-project') {
+            throw Object.assign(new Error('Entity not found: Project'), { code: 'linear_sdk_error' });
+          }
+          return {
+            id: projectId,
+            name: 'Dummy Project',
+            url: 'https://linear.app/mrboo/project/dummy-project-replacement'
+          };
+        }
+      } as never,
+      registry: {
+        load: async () => ({ version: 3, projects: [existingProject] }),
+        create: async () => {
+          throw new Error('registry create should not be called');
+        }
+      } as never,
+      runnerManager: { start: async () => ({}) } as never
+    });
+
+    assert.deepEqual(resolvedProjectIds, ['stale-linear-project', 'replacement-linear-project']);
+    assert.deepEqual(result.steps.map((step) => `${step.name}:${step.status}`), [
+      'linearProject:ok',
+      'bootstrap:ok',
+      'registry:skipped',
+      'workflow:ok',
+      'runner:skipped'
+    ]);
+    assert.equal(result.linearProject?.id, 'replacement-linear-project');
+    assert.equal(result.project?.tracker.projectId, 'replacement-linear-project');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('setupManagedProject recovers stale registry Linear linkage with project name lookup', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'mrb135-name-'));
+  const existingProject = managedProject({
+    id: 'dummy-project',
+    githubUrl: 'https://github.com/mboogerd/dummy.git',
+    linearProjectId: 'stale-linear-project'
+  });
+  let createProjectCalls = 0;
+
+  try {
+    const result = await setupManagedProject({
+      name: 'Dummy Project',
+      teamKey: 'MRB',
+      githubUrl: 'https://github.com/mboogerd/dummy.git'
+    }, {
+      env: {
+        SYMPHONY_RUNNER_COMMAND: 'node',
+        DEFAULT_SYMPHONY_WORKSPACES: join(root, 'workspaces'),
+        DEFAULT_SYMPHONY_LOGS: join(root, 'logs')
+      },
+      linear: {
+        ...fakeLinear(),
+        findProjectByNameForTeam: async () => ({
+          id: 'name-matched-linear-project',
+          name: 'Dummy Project',
+          url: 'https://linear.app/mrboo/project/dummy-project-name-matched'
+        }),
+        createProject: async () => {
+          createProjectCalls += 1;
+          return {
+            id: 'created-project',
+            name: 'Dummy Project',
+            url: 'https://linear.app/mrboo/project/dummy-project-created'
+          };
+        },
+        resolveProjectForTeam: async () => {
+          throw Object.assign(new Error('Linear project "stale-linear-project" was not found in the resolved team'), { code: 'project_not_found' });
+        }
+      } as never,
+      registry: {
+        load: async () => ({ version: 3, projects: [existingProject] }),
+        create: async () => {
+          throw new Error('registry create should not be called');
+        }
+      } as never,
+      runnerManager: { start: async () => ({}) } as never
+    });
+
+    assert.equal(createProjectCalls, 0);
+    assert.deepEqual(result.steps.map((step) => `${step.name}:${step.status}`), [
+      'linearProject:ok',
+      'bootstrap:ok',
+      'registry:skipped',
+      'workflow:ok',
+      'runner:skipped'
+    ]);
+    assert.equal(result.linearProject?.id, 'name-matched-linear-project');
+    assert.equal(result.project?.tracker.projectId, 'name-matched-linear-project');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 type BootstrapFixture = {
   root: string;
   binDir: string;
